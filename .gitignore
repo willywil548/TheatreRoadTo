@@ -1,0 +1,13 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+*.db
+*.db-shm
+*.db-wal
+*.vsidx
+*.testlog
+*.manifest
+*.suo
+/.vs/TheatreRoadTo/v17/DocumentLayout.backup.json
+/.vs/TheatreRoadTo/v17/DocumentLayout.json
