@@ -11,3 +11,5 @@
 *.suo
 /.vs/TheatreRoadTo/v17/DocumentLayout.backup.json
 /.vs/TheatreRoadTo/v17/DocumentLayout.json
+/.vs/TheatreRoadTo/config/applicationhost.config
+*.v2
