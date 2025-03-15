@@ -4,4 +4,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Humanizer" Version="2.14.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.3" />
+    <PackageReference Include="MudBlazor.FontIcons.MaterialIcons" Version="1.2.0" />
+    <PackageReference Include="MudBlazor.FontIcons.MaterialSymbols" Version="1.2.0" />
+    <PackageReference Include="MudBlazor.ThemeManager" Version="3.0.0" />
+    <PackageReference Include="MudBlazor.Translations" Version="2.2.0" />
+  </ItemGroup>
 </Project>
