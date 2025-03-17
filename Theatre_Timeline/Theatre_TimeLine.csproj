@@ -13,4 +13,7 @@
     <PackageReference Include="MudBlazor.ThemeManager" Version="3.0.0" />
     <PackageReference Include="MudBlazor.Translations" Version="2.2.0" />
   </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Data\" />
+  </ItemGroup>
 </Project>
