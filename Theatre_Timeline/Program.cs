@@ -1,4 +1,6 @@
 using MudBlazor.Services;
+using Theatre_TimeLine.Contracts;
+using Theatre_TimeLine.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -6,6 +8,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddMudServices();
+
+// Inject Settings
+builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
+
+// Inject the tenant manager service.
+builder.Services.AddSingleton<ITenantManagerService, TenantManagerService>();
 
 var app = builder.Build();
 
