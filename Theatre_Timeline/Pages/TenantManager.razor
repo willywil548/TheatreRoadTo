@@ -1,0 +1,72 @@
+@using Theatre_TimeLine.Services
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+@inject ITenantManagerService TenantManagerService
+
+@page "/TenantManagement/{Tenant?}"
+
+<div id="existing-tenants">
+    @foreach (ITenantContainer container in TenantManagerService.GetWebApps())
+    {
+        <MudCard Class="card">
+            <MudCardHeader Class="card card-header">@container.TenantName</MudCardHeader>
+            <MudCardContent>
+                <p>@container.Description</p>
+                <code>@container.TenantId</code>
+            </MudCardContent>
+        </MudCard>
+        <br />
+    }
+</div>
+
+<!-- #region  Edit a Tenant -->
+@if (this.editing != null)
+{
+    <div id="edit-tenant">
+        <MudCard Class="card">
+            <MudCardHeader Class="card card-header">@this.editing.TenantName</MudCardHeader>
+            <MudCardContent>Something useful here.</MudCardContent>
+        </MudCard>
+    </div>
+}
+
+<br />
+<div id="create-tenant">
+    <p>Place holder for a form.</p>
+    <button class="btn btn-primary" @onclick="CreateTenant">Create Tenant</button>
+</div>
+
+@code {
+    private ITenantContainer? editing;
+
+    [Parameter]
+    public string? Tenant { get; set; }  = string.Empty;
+
+    protected async override Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+    }
+
+    private void CreateTenant()
+    {
+        TenantManagerService.CreateTenant(new TenantContainer()
+        {
+             TenantId = Guid.NewGuid(),
+             Description = "Test description",
+             TenantName = "Test Name"
+        });
+
+        this.StateHasChanged();
+    }
+
+    private bool TryGetTenantContainer(out ITenantContainer? tenantContainer)
+    {
+        tenantContainer = null;
+        if (!string.IsNullOrEmpty(this.Tenant) && Guid.TryParse(this.Tenant, out Guid result))
+        {
+            tenantContainer = TenantManagerService.GetTenant(result);
+        }
+
+        return tenantContainer != null;
+    }
+}

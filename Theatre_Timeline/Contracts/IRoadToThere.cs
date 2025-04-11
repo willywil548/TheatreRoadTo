@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace Theatre_TimeLine.Contracts
 {
     public interface IRoadToThere
@@ -21,5 +23,13 @@ namespace Theatre_TimeLine.Contracts
         /// Gets the road ID.
         /// </summary>
         Guid RoadId { get; }
+
+        /// <summary>
+        /// Gets the road admin.
+        /// </summary>
+        string RoadAdmin { get; }
+
+        [DisplayName("URI to pull css from.")]
+        string PageHostCssPath { get; }
     }
 }

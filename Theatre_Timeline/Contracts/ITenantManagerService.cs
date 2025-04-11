@@ -6,6 +6,6 @@ namespace Theatre_TimeLine.Contracts
 
         ITenantContainer[] GetWebApps();
 
-        ITenantContainer GetTenant(Guid guid);
+        ITenantContainer? GetTenant(Guid guid);
     }
 }

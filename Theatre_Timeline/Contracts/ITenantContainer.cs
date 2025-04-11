@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Theatre_TimeLine.Contracts
 {
     public interface ITenantContainer
@@ -18,8 +20,14 @@ namespace Theatre_TimeLine.Contracts
         Guid TenantId { get; }
 
         /// <summary>
+        /// Gets the admin security groups for the tenant.
+        /// </summary>
+        string AdminSecurityGroup { get; }
+
+        /// <summary>
         /// Gets the roads under the tenant.
         /// </summary>
+        [JsonIgnore]
         IRoadToThere[] Roads { get; }
     }
 }
