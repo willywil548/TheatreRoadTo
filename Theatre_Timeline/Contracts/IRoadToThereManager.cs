@@ -7,5 +7,7 @@ namespace Theatre_Timeline.Contracts
         void SaveRoad(RoadToThere roadToThere);
 
         void RemoveRoad(Guid roadId);
+
+        IRoadToThere GetRoad(Guid roadId);
     }
 }

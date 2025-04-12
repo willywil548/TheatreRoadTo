@@ -20,6 +20,11 @@ namespace Theatre_Timeline.Contracts
         string Banner { get; }
 
         /// <summary>
+        /// Gets the Tenant ID.
+        /// </summary>
+        Guid TenantId { get; }
+
+        /// <summary>
         /// Gets the road ID.
         /// </summary>
         Guid RoadId { get; }

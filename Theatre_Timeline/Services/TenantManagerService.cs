@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using Theatre_TimeLine.Contracts;
+using Theatre_Timeline.Contracts;
 using Theatre_TimeLine.Models;
 
 namespace Theatre_TimeLine.Services
@@ -52,9 +51,43 @@ namespace Theatre_TimeLine.Services
             File.WriteAllText(tenantConfigurationFileInfo.FullName, tenantConfig);
         }
 
+        public void RemoveTenant(Guid guid)
+        {
+            string tenantPath = Path.Combine(this.dataPath, guid.ToString());
+            DirectoryInfo tenantDirectory = new(tenantPath);
+            if (tenantDirectory.Exists)
+            {
+                tenantDirectory.Delete(recursive: true);
+            }
+        }
+
+        public void SaveRoad(RoadToThere roadToThere)
+        {
+            this.ActionRoad(roadToThere.TenantId, tenant => tenant.SaveRoad(roadToThere));
+        }
+
+        public void RemoveRoad(Guid roadId)
+        {
+            this.ActionRoad(roadId, tenant => tenant.RemoveRoad(roadId));
+        }
+
+        public IRoadToThere GetRoad(Guid roadId)
+        {
+            ITenantContainer? tenant = this.GetTenant(roadId);
+            if (tenant == null)
+            {
+                throw new InvalidOperationException("Tenant not found.");
+            }
+
+            return tenant.Roads.FirstOrDefault(r => r.RoadId.Equals(roadId))
+                ?? throw new InvalidOperationException("Road not found.");
+        }
+
         public ITenantContainer? GetTenant(Guid guid)
         {
-            return this.GetWebApps().FirstOrDefault(c => c.TenantId.Equals(guid));
+            ITenantContainer[] tenantContainers = this.GetWebApps();
+            return tenantContainers.FirstOrDefault(c => c.TenantId.Equals(guid))
+                ?? tenantContainers.FirstOrDefault(c => c.Roads.Any(r => r.RoadId.Equals(guid)));
         }
 
         public ITenantContainer[] GetWebApps()
@@ -87,6 +120,17 @@ namespace Theatre_TimeLine.Services
             }
 
             return [.. containers];
+        }
+
+        private void ActionRoad(Guid tenantId, Action<ITenantContainer> action)
+        {
+            ITenantContainer? tenant = this.GetTenant(tenantId);
+            if (tenant == null)
+            {
+                return;
+            }
+
+            action?.Invoke(tenant);
         }
     }
 }

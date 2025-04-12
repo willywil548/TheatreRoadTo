@@ -1,4 +1,4 @@
-using Theatre_TimeLine.Contracts;
+using Theatre_Timeline.Contracts;
 
 namespace Theatre_TimeLine.Models
 {
@@ -37,5 +37,10 @@ namespace Theatre_TimeLine.Models
         /// Gets or sets the CSS URI to pull in the CSS from Tenant Host.
         /// </summary>
         public string PageHostCssPath { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets the Tenant ID.
+        /// </summary>
+        public Guid TenantId { get; set; }
     }
 }

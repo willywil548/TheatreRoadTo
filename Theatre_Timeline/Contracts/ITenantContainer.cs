@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Theatre_Timeline.Contracts
 {
-    public interface ITenantContainer
+    public interface ITenantContainer : IRoadToThereManager
     {
         /// <summary>
         /// Gets Tenant Name.
