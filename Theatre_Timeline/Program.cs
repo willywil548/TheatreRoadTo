@@ -1,5 +1,6 @@
 using MudBlazor.Services;
 using Theatre_Timeline.Contracts;
+using Theatre_Timeline.Services;
 using Theatre_TimeLine.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +15,9 @@ builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
 
 // Inject the tenant manager service.
 builder.Services.AddSingleton<ITenantManagerService, TenantManagerService>();
+
+// Inject the clipboard service.
+builder.Services.AddScoped<IClipboardService, ClipboardService>();
 
 var app = builder.Build();
 
