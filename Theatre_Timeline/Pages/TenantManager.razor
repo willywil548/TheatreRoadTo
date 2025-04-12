@@ -19,17 +19,6 @@
     }
 </div>
 
-<!-- #region  Edit a Tenant -->
-@if (this.editing != null)
-{
-    <div id="edit-tenant">
-        <MudCard Class="card">
-            <MudCardHeader Class="card card-header">@this.editing.TenantName</MudCardHeader>
-            <MudCardContent>Something useful here.</MudCardContent>
-        </MudCard>
-    </div>
-}
-
 <br />
 <div id="create-tenant">
     <p>Place holder for a form.</p>
@@ -37,7 +26,6 @@
 </div>
 
 @code {
-    private ITenantContainer? editing;
 
     [Parameter]
     public string? Tenant { get; set; }  = string.Empty;
