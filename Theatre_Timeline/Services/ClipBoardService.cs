@@ -15,7 +15,7 @@ namespace Theatre_Timeline.Services
     /// </summary>
     public class ClipboardService : IClipboardService
     {
-        private readonly IJSRuntime _jsInterop;
+        private readonly IJSRuntime jsInterop;
 
         /// <summary>
         /// Initializes a new instance of <see cref="ClipboardService"/>
@@ -23,7 +23,7 @@ namespace Theatre_Timeline.Services
         /// <param name="jsInterop"></param>
         public ClipboardService(IJSRuntime jsInterop)
         {
-            _jsInterop = jsInterop;
+            this.jsInterop = jsInterop;
         }
 
         /// <summary>
@@ -33,7 +33,7 @@ namespace Theatre_Timeline.Services
         /// <returns><see cref="Task"/>.</returns>
         public async Task CopyToClipboard(string text)
         {
-            await _jsInterop.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            await this.jsInterop.InvokeVoidAsync("navigator.clipboard.writeText", text);
         }
     }
 }
