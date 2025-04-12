@@ -1,6 +1,7 @@
 @using Theatre_TimeLine.Services
 @using Theatre_Timeline.Contracts
 @using Theatre_TimeLine.Models
+@using Theatre_Timeline.Components
 @inject ITenantManagerService TenantManagerService
 @implements IRoadToThereManager
 
@@ -9,28 +10,7 @@
 <div id="existing-tenants">
     @foreach (ITenantContainer container in TenantManagerService.GetWebApps())
     {
-        <MudCard Class="card" >
-            <MudCardHeader Class="card card-header">@container.TenantName</MudCardHeader>
-            <MudCardContent>
-                <p>@container.Description</p>
-                <code>@container.TenantId</code>
-            </MudCardContent>
-            <MudCardActions>
-                <MudButtonGroup>
-                    <MudButton OnClick="() =>
-{
-    this.Tenant = container.TenantId.ToString();
-    ButtonClicked();
-}">@buttonText.Item2</MudButton>
-                    <MudMenu Icon="@Icons.Material.Filled.ArrowDropDown" Style="align-self: auto;">
-                        @foreach (string action in tenantActions)
-                        {
-                            <MudMenuItem OnClick="() => SetButtonText(Array.IndexOf(tenantActions, action))">@action</MudMenuItem>
-                        }
-                    </MudMenu>
-                </MudButtonGroup>
-            </MudCardActions>
-        </MudCard>
+        <TenantConfiguration TenantContainer="@container" OnCreateRoad="CreateRoad" OnRemoveTenant="RemoveTenant" />
         <br />
     }
 </div>
@@ -43,14 +23,6 @@
 
 @code {
 
-    private static readonly string[] tenantActions =
-    {
-        "Create Road",
-        "Remove Tenant"
-    };
-
-    private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
-
     [Parameter]
     public string? Tenant { get; set; }  = string.Empty;
 
@@ -59,24 +31,38 @@
         await base.OnInitializedAsync();
     }
 
+    public void CreateRoad(ITenantContainer tenantContainer)
+    {
+        RoadToThere roadToThere = new RoadToThere()
+            {
+                RoadId = Guid.NewGuid(),
+                TenantId = string.IsNullOrEmpty(this.Tenant) ? Guid.Empty : Guid.Parse(this.Tenant)
+            };
+        tenantContainer.SaveRoad(roadToThere);
+    }
+
+    public void SaveRoad(RoadToThere roadToThere) => TenantManagerService.SaveRoad(roadToThere);
+
+    public void RemoveRoad(Guid roadId) => TenantManagerService.RemoveRoad(roadId);
+
+    public IRoadToThere GetRoad(Guid roadId) => TenantManagerService.GetRoad(roadId);
+
+
     private void CreateTenant()
     {
         TenantManagerService.CreateTenant(new TenantContainer()
-        {
-             TenantId = Guid.NewGuid(),
-             Description = "Test description",
-             TenantName = "Test Name"
-        });
-
+            {
+                TenantId = Guid.NewGuid(),
+                Description = "Test description",
+                TenantName = "Test Name"
+            });
         this.StateHasChanged();
     }
 
-    private void RemoveTenant()
+    private void RemoveTenant(ITenantContainer tenantContainer)
     {
-        if (TryGetTenantContainer(out ITenantContainer? tenantContainer) && tenantContainer != null)
-        {
-            TenantManagerService.RemoveTenant(tenantContainer.TenantId);
-        }
+        TenantManagerService.RemoveTenant(tenantContainer.TenantId);
+        this.StateHasChanged();
     }
 
     private bool TryGetTenantContainer(out ITenantContainer? tenantContainer)
@@ -88,39 +74,5 @@
         }
 
         return tenantContainer != null;
-    }
-
-    private void SetButtonText(int id)
-    {
-        buttonText = Tuple.Create(id, tenantActions[id]);
-    }
-
-    public void CreateRoad()
-    {
-        RoadToThere roadToThere = new RoadToThere()
-            {
-                RoadId = Guid.NewGuid(),
-                TenantId = string.IsNullOrEmpty(this.Tenant) ? Guid.Empty : Guid.Parse(this.Tenant)
-            };
-        this.SaveRoad(roadToThere);
-    }
-
-    public void SaveRoad(RoadToThere roadToThere) => TenantManagerService.SaveRoad(roadToThere);
-
-    public void RemoveRoad(Guid roadId) => TenantManagerService.RemoveRoad(roadId);
-
-    public IRoadToThere GetRoad(Guid roadId) => TenantManagerService.GetRoad(roadId);
-
-    private void ButtonClicked()
-    {
-        switch (buttonText.Item1)
-        {
-            case 0:
-                CreateRoad();
-                break;
-            case 1:
-                RemoveTenant();
-                break;
-        }
     }
 }
