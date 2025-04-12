@@ -1,6 +1,6 @@
 using System.ComponentModel;
 
-namespace Theatre_TimeLine.Contracts
+namespace Theatre_Timeline.Contracts
 {
     public interface IRoadToThere
     {
