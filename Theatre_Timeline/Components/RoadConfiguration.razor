@@ -1,5 +1,19 @@
-﻿<h3>RoadConfiguration</h3>
+﻿@using Theatre_Timeline.Contracts
+@using Theatre_TimeLine.Models
+@namespace Theatre_Timeline.Components
+@inherits LayoutComponentBase
+
+<MudCard>
+    <MudCardHeader Class="card card-header">@this.Road.ToString()</MudCardHeader>
+    <MudCardContent>
+        <h6>ID: @Road.RoadId</h6>
+        Start: @Road.StartTime.Date <br />
+        End: @Road.EndTime.Date <br />
+        TenantId:@Road.TenantId
+    </MudCardContent>
+</MudCard>
 
 @code {
-
+    [Parameter]
+    public IRoadToThere Road { get; set; } = new RoadToThere();
 }

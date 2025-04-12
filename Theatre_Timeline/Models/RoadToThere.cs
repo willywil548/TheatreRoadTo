@@ -42,5 +42,20 @@ namespace Theatre_TimeLine.Models
         /// Gets the Tenant ID.
         /// </summary>
         public Guid TenantId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the description.
+        /// </summary>
+        public string Description { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the title.
+        /// </summary>
+        public string Title { get; set; } = string.Empty;
+
+        public override string ToString()
+        {
+            return $"{Title} - {this.StartTime.Date}-{this.EndTime.Date}";
+        }
     }
 }

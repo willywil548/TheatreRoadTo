@@ -11,6 +11,16 @@
         <p>
             @TenantContainer.Description
         </p>
+        <h6>Roads:</h6>
+        <MudExpansionPanels>
+            @foreach (IRoadToThere road in TenantContainer.Roads)
+            {
+                <MudExpansionPanel Text="@road.ToString()">
+                    <RoadConfiguration Road="@road" />
+                </MudExpansionPanel>
+                <br />
+            }
+        </MudExpansionPanels>
     </MudCardContent>
     <MudCardActions>
         <MudButtonGroup>
@@ -24,8 +34,6 @@
         </MudButtonGroup>
     </MudCardActions>
 </MudCard>
-<br />
-
 
 @code {
     private static readonly string[] tenantActions =
@@ -55,6 +63,9 @@
     [Parameter]
     public Action<ITenantContainer>? OnCreateRoad { get; set; }
 
+    [Parameter]
+    public Action<ITenantContainer>? OnClick { get; set; }
+
     private void SetButtonText(int id)
     {
         buttonText = Tuple.Create(id, tenantActions[id]);
@@ -62,6 +73,7 @@
 
     private void ButtonClicked()
     {
+        OnClick?.Invoke(TenantContainer);
         switch (buttonText.Item1)
         {
             case 0:

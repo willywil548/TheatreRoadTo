@@ -105,10 +105,8 @@ namespace Theatre_TimeLine.Models
             {
                 try
                 {
-                    if (Path.GetDirectoryName(roadDir) is string roadDirName)
-                    {
-                        roadToTheres.Add(this.GetRoad(Guid.Parse(roadDirName)));
-                    }
+                    DirectoryInfo roadDirectory = new(roadDir);
+                    roadToTheres.Add(this.GetRoad(Guid.Parse(roadDirectory.Name)));
                 }
                 catch
                 {

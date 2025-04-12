@@ -36,5 +36,15 @@ namespace Theatre_Timeline.Contracts
 
         [DisplayName("URI to pull css from.")]
         string PageHostCssPath { get; }
+
+        /// <summary>
+        /// Gets the description.
+        /// </summary>
+        string Description { get; }
+
+        /// <summary>
+        /// Gets the title.
+        /// </summary>
+        string Title { get; }
     }
 }
