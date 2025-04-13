@@ -1,6 +1,9 @@
 ﻿@namespace Theatre_TimeLine.Pages
+
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Components
+
 @page "/RoadToThere/{TenantId?}"
 
 @inject ITenantManagerService TenantManagerService
@@ -12,37 +15,20 @@
     return;
 }
 
-<MudPaper Elevation="1">
-    <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
-        @foreach (IRoadToThere road in tenant.Roads)
-        {
-            <MudTabPanel Text="@road?.Title">
-                <MudTimeline TimelinePosition="@TimelinePosition.Alternate">
-                    <MudTimelineItem>
-                        <MudText>Insert Poll here.</MudText>
-                    </MudTimelineItem>
-                    <MudTimelineItem>
-                        <MudText Align="Align.End">Insert update to parents here.</MudText>
-                    </MudTimelineItem>
-                    <MudTimelineItem Color="Color.Primary">
-                        <MudText>Insert Instagram Post here</MudText>
-                    </MudTimelineItem>
-                </MudTimeline>
-                <MudTimeline TimelinePosition="@TimelinePosition.Alternate">
-                    <MudTimelineItem>
-                        <MudText>Insert Poll here.</MudText>
-                    </MudTimelineItem>
-                    <MudTimelineItem>
-                        <MudText Align="Align.End">Insert update to parents here.</MudText>
-                    </MudTimelineItem>
-                    <MudTimelineItem Color="Color.Primary">
-                        <MudText>Insert Instagram Post here</MudText>
-                    </MudTimelineItem>
-                </MudTimeline>
-            </MudTabPanel>
-        }
-    </MudTabs>
-</MudPaper>
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+    @foreach (IRoadToThere road in tenant.Roads)
+    {
+        <MudTabPanel Text="@road?.Title">
+            <MudPaper Elevation="2" Class="align-content-center rounded-2 p-3">
+                <MudText>@road?.Description</MudText>
+                @for (int i = 0; i <= road?.Duration; i++)
+                {
+                    <Block Road="road" BlockIndex="i" />
+                }
+            </MudPaper>
+        </MudTabPanel>
+    }
+</MudTabs>
 
 @code {
 
@@ -53,7 +39,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-
         if (string.IsNullOrEmpty(TenantId))
         {
             UriBuilder uri = new (NavigationManager.BaseUri);

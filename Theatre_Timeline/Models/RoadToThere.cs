@@ -7,6 +7,10 @@ namespace Theatre_TimeLine.Models
     /// </summary>
     public class RoadToThere : IRoadToThere
     {
+        private static readonly object _lock = new();
+
+        private int duration = -1;
+
         /// <summary>
         /// Gets for sets the start of the road.
         /// </summary>
@@ -63,9 +67,51 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public int RoadScopeLength { get; set; } = 1;
 
+        /// <summary>
+        /// Gets the duration of the road.
+        /// </summary>
+        public int Duration
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    if (this.duration == -1)
+                    {
+                        if (this.StartTime == null || this.EndTime == null)
+                        {
+                            this.duration = 1;
+                        }
+                        else
+                        {
+                            TimeSpan timeSpan = (DateTime)this.EndTime - (DateTime)this.StartTime;
+                            switch (this.RoadScope)
+                            {
+                                // Drop to the next lower measurement.
+                                // Used to break the road into blocks.
+                                case RoadScope.Year:
+                                case RoadScope.Month:
+                                case RoadScope.Week:
+                                    this.duration = (int)timeSpan.TotalDays;
+                                    break;
+                                case RoadScope.Day:
+                                    this.duration = (int)timeSpan.TotalHours;
+                                    break;
+                                default:
+                                    this.duration = 1;
+                                    break;
+                            }
+                        }
+                    }
+                }
+
+                return this.duration;
+            }
+        }
+
         public override string ToString()
         {
-            return $"{Title} - {this.StartTime?.ToString("dd-MMM-yy")}-=>{this.EndTime?.ToString("dd-MMM-yy")}";
+            return $"{Title} - {this.StartTime?.ToString("dd-MMM-yy")}==>{this.EndTime?.ToString("dd-MMM-yy")}";
         }
     }
 }

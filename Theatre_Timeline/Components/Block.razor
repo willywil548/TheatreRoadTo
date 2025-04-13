@@ -1,0 +1,99 @@
+﻿@namespace Theatre_TimeLine.Components
+@using Theatre_TimeLine.Contracts
+
+<MudTimeline TimelinePosition="@TimelinePosition.Start">
+    @if (ShouldRenderTimeSeparator())
+    {
+        <MudTimelineItem>
+            <MudText>@GetRoadDatePart()</MudText>
+        </MudTimelineItem>
+    }
+</MudTimeline>
+
+@code {
+
+    private int measurement = 24;
+
+    [Parameter]
+    public IRoadToThere? Road { get; set; }
+
+    [Parameter]
+    public int BlockIndex { get; set; }
+
+    protected override Task OnParametersSetAsync()
+    {
+        if (Road != null)
+        {
+            switch (Road.RoadScope)
+            {
+                case RoadScope.Week:
+                    measurement = 1;
+                    break;
+                case RoadScope.Month:
+                    measurement = 4;
+                    break;
+                case RoadScope.Year:
+                    measurement = 30;
+                    break;
+                default:
+                    measurement = 24;
+                    break;
+            }
+        }
+
+        return base.OnParametersSetAsync();
+    }
+
+    private string GetRoadDatePart()
+    {
+        DateTime resultingDateTime = GetBlockTime();
+
+        // Convert the result of the point in time to a string.
+        switch (Road?.RoadScope)
+        {
+            case RoadScope.Day:
+                return resultingDateTime.ToString("t");
+            case RoadScope.Week:
+                return resultingDateTime.ToString("MMM dd, yyyy");
+            case RoadScope.Month:
+                return resultingDateTime.ToString("MMM dd, yyyy");
+            case RoadScope.Year:
+                return resultingDateTime.ToString("MMM yyyy");
+            default:
+                return string.Empty;
+        }
+    }
+
+    private DateTime GetBlockTime()
+    {
+        if (Road is null)
+        {
+            return DateTime.Now;
+        }
+
+        if (!Road.StartTime.HasValue)
+        {
+            return DateTime.Now;
+        }
+
+        DateTime startDate = Road?.StartTime.Value ?? DateTime.Now;
+        DateTime resultingDateTime = startDate.AddHours(BlockIndex);
+
+        // Convert block index to a point in time.
+        switch (Road?.RoadScope)
+        {
+            case RoadScope.Week:
+            case RoadScope.Month:
+            case RoadScope.Year:
+                resultingDateTime = startDate.AddDays(BlockIndex);
+                break;
+        }
+
+        return resultingDateTime;
+    }
+
+    private bool ShouldRenderTimeSeparator()
+    {
+        return BlockIndex % measurement == 0;
+    }
+}
