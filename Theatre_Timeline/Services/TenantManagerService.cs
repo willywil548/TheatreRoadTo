@@ -10,6 +10,8 @@ namespace Theatre_TimeLine.Services
     /// </summary>
     internal sealed class TenantManagerService : ITenantManagerService
     {
+        public const string DemoGuid = "00000000-0000-0000-0000-3eca75185852";
+
         private const string configurationKey = "TenantManager:DataPath";
         private const string tenantConfigurationFile = "TenantConfiguration.json";
         private readonly string dataPath;
@@ -34,7 +36,13 @@ namespace Theatre_TimeLine.Services
             }
 
             this.dataPath = dataPath;
-            Directory.CreateDirectory(this.dataPath);
+            if (!Directory.Exists(this.dataPath))
+            {
+                Directory.CreateDirectory(this.dataPath);
+
+                // Create a demo page.
+                CreateDemoPage();
+            }
         }
 
         public void CreateTenant(ITenantContainer tenant)
@@ -61,7 +69,7 @@ namespace Theatre_TimeLine.Services
             }
         }
 
-        public void SaveRoad(RoadToThere roadToThere)
+        public void SaveRoad(IRoadToThere roadToThere)
         {
             this.ActionRoad(roadToThere.TenantId, tenant => tenant.SaveRoad(roadToThere));
         }
@@ -131,6 +139,33 @@ namespace Theatre_TimeLine.Services
             }
 
             action?.Invoke(tenant);
+        }
+
+        private void CreateDemoPage()
+        {
+            // Setup the Demo.
+            ITenantContainer tenant = new TenantContainer
+            {
+                TenantName = "Demo",
+                Description = "Demo Road to highlight some capabilities.",
+                AdminSecurityGroup = "Demo-RoadToThere",
+                TenantId = Guid.Parse(DemoGuid),
+                TenantPath = Path.Combine(this.dataPath, DemoGuid)
+            };
+
+            this.CreateTenant(tenant);
+
+            IRoadToThere roadToThere = new RoadToThere
+            {
+                RoadId = Guid.Parse(DemoGuid),
+                Description = "Road from start to finish",
+                TenantId = tenant.TenantId,
+                EndTime = DateTime.Now.AddDays(365),
+                Title = "Full Demo of capabilities",
+                RoadAdmin = tenant.AdminSecurityGroup,
+            };
+
+            this.SaveRoad(roadToThere);
         }
     }
 }

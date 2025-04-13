@@ -43,7 +43,7 @@ namespace Theatre_TimeLine.Models
         [Browsable(false)]
         public string? TenantPath { get; set; }
 
-        public void SaveRoad(RoadToThere roadToThere)
+        public void SaveRoad(IRoadToThere roadToThere)
         {
             if (string.IsNullOrEmpty(this.TenantPath))
             {
@@ -97,6 +97,12 @@ namespace Theatre_TimeLine.Models
         {
             List<IRoadToThere> roadToTheres = [];
             if (string.IsNullOrEmpty(this.TenantPath))
+            {
+                return [.. roadToTheres];
+            }
+
+            // Check tenant path.
+            if (!Directory.Exists(this.TenantPath))
             {
                 return [.. roadToTheres];
             }

@@ -7,26 +7,41 @@
 
 @page "/TenantManagement/{Tenant?}"
 
-<MudLayout>
-    <MudAppBar Color="Color.Primary" Dense="true" Gutters="true">
-        <MudIconButton Icon="@Icons.Material.Filled.AddCard" Color="Color.Inherit" Edge="Edge.Start" OnClick="CreateTenant" />
-    </MudAppBar>
+<MudPaper Color="Color.Transparent" Elevation="0" Style="overflow:scroll; position:relative;">
+    <MudDrawerContainer Class="mud-height-full">
+        <MudDrawer @bind-Open="_drawerOpen"
+                   ClipMode="DrawerClipMode.Docked"
+                   Elevation="1"
+                   Anchor="Anchor.Top">
+            <MudDrawerHeader>
+                <MudText Typo="Typo.h6">Tenant Manager</MudText>
+            </MudDrawerHeader>
+            <MudNavMenu>
+                <MudButton OnClick="CreateTenant">Create Tenant</MudButton>
+            </MudNavMenu>
+        </MudDrawer>
+        <div class="d-flex justify-center align-center mud-height-full">
+            <MudExpansionPanels>
+                @foreach (ITenantContainer container in TenantManagerService.GetWebApps())
+                {
+                    <MudExpansionPanel Text="@container.TenantName">
+                        <TenantConfiguration TenantContainer="@container"
+                                             OnCreateRoad="CreateRoad"
+                                             OnRemoveTenant="RemoveTenant"
+                                             OnSaveRoad="SaveRoad"
+                                             OnRemoveRoad="RemoveRoad"
+                                             OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
+                    </MudExpansionPanel>
 
-    <MudMainContent id="existing-tenants">
-        <MudExpansionPanels>
-            @foreach (ITenantContainer container in TenantManagerService.GetWebApps())
-            {
-                <MudExpansionPanel Text="@container.TenantName">
-                    <TenantConfiguration TenantContainer="@container" OnCreateRoad="CreateRoad" OnRemoveTenant="RemoveTenant" OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
-                </MudExpansionPanel>
-
-                <br />
-            }
-        </MudExpansionPanels>
-    </MudMainContent>
-</MudLayout>
+                    <br />
+                }
+            </MudExpansionPanels>
+        </div>
+    </MudDrawerContainer>
+</MudPaper>
 
 @code {
+    private bool _drawerOpen = true;
 
     [Parameter]
     public string? Tenant { get; set; }  = string.Empty;
@@ -47,12 +62,32 @@
         tenantContainer.SaveRoad(roadToThere);
     }
 
-    public void SaveRoad(RoadToThere roadToThere) => TenantManagerService.SaveRoad(roadToThere);
+    /// <summary>
+    /// Save the road to the tenant.
+    /// </summary>
+    /// <param name="roadToThere"><see cref="RoadToThere"/>.</param>
+    public void SaveRoad(IRoadToThere roadToThere)
+    {
+        TenantManagerService.SaveRoad(roadToThere);
+        this.StateHasChanged();
+    }
 
-    public void RemoveRoad(Guid roadId) => TenantManagerService.RemoveRoad(roadId);
+    /// <summary>
+    /// Remove the road from the tenant.
+    /// </summary>
+    /// <param name="roadId">Road ID.</param>
+    public void RemoveRoad(Guid roadId)
+    {
+        TenantManagerService.RemoveRoad(roadId);
+        this.StateHasChanged();
+    }
 
+    /// <summary>
+    /// Get the road from the tenant.
+    /// </summary>
+    /// <param name="roadId">Road ID.</param>
+    /// <returns><see cref="IRoadToThere"/>.</returns>
     public IRoadToThere GetRoad(Guid roadId) => TenantManagerService.GetRoad(roadId);
-
 
     private void CreateTenant()
     {

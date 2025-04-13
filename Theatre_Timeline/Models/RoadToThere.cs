@@ -10,17 +10,17 @@ namespace Theatre_TimeLine.Models
         /// <summary>
         /// Gets for sets the start of the road.
         /// </summary>
-        public DateTimeOffset StartTime { get; set; } = DateTimeOffset.Now;
+        public DateTime? StartTime { get; set; } = DateTime.Now;
 
         /// <summary>
         /// Gets or set the end of the road.
         /// </summary>
-        public DateTimeOffset EndTime { get; set; } = DateTimeOffset.Now.AddDays(30);
+        public DateTime? EndTime { get; set; } = DateTime.Now.AddDays(30);
 
         /// <summary>
         /// Gets or sets the banner.
         /// </summary>
-        public string Banner { get; private set; } = string.Empty;
+        public string Banner { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets the unique ID of the road.
@@ -53,9 +53,19 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public string Title { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Gets or sets the road scope.
+        /// </summary>
+        public RoadScope RoadScope { get; set; } = RoadScope.Year;
+
+        /// <summary>
+        /// Gets or sets the length of the road.
+        /// </summary>
+        public int RoadScopeLength { get; set; }
+
         public override string ToString()
         {
-            return $"{Title} - {this.StartTime.Date}-{this.EndTime.Date}";
+            return $"{Title} - {this.StartTime?.ToString("dd-MMM-yy")}-=>{this.EndTime?.ToString("dd-MMM-yy")}";
         }
     }
 }

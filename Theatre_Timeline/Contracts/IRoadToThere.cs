@@ -2,22 +2,30 @@ using System.ComponentModel;
 
 namespace Theatre_Timeline.Contracts
 {
+    public enum RoadScope
+    {
+        Month = 0,
+        Day  = 1,
+        Week = 2,
+        Year = 3,
+    }
+
     public interface IRoadToThere
     {
         /// <summary>
-        /// Gets the Start time of the road.
+        /// Gets or sets the Start time of the road.
         /// </summary>
-        DateTimeOffset StartTime { get; }
+        DateTime? StartTime { get; set; }
 
         /// <summary>
-        /// Gets the End time of the road.
+        /// Gets or sets the End time of the road.
         /// </summary>
-        DateTimeOffset EndTime { get; }
+        DateTime? EndTime { get; set; }
 
         /// <summary>
-        /// Gets the Banner of the road.
+        /// Gets or sets the Banner of the road.
         /// </summary>
-        string Banner { get; }
+        string Banner { get; set; }
 
         /// <summary>
         /// Gets the Tenant ID.
@@ -30,21 +38,33 @@ namespace Theatre_Timeline.Contracts
         Guid RoadId { get; }
 
         /// <summary>
-        /// Gets the road admin.
+        /// Gets or sets the road admin.
         /// </summary>
-        string RoadAdmin { get; }
-
-        [DisplayName("URI to pull css from.")]
-        string PageHostCssPath { get; }
+        string RoadAdmin { get; set; }
 
         /// <summary>
-        /// Gets the description.
+        /// Gets or sets css for a road.
         /// </summary>
-        string Description { get; }
+        string PageHostCssPath { get; set; }
 
         /// <summary>
-        /// Gets the title.
+        /// Gets or sets the description.
         /// </summary>
-        string Title { get; }
+        string Description { get; set; }
+
+        /// <summary>
+        /// Gets or sets the title.
+        /// </summary>
+        string Title { get; set; }
+
+        /// <summary>
+        /// Gets or sets the road scope.
+        /// </summary>
+        RoadScope RoadScope { get; set; }
+
+        /// <summary>
+        /// Gets or sets the length of the scope.
+        /// </summary>
+        int RoadScopeLength { get; set; }
     }
 }

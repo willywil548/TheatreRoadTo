@@ -16,7 +16,7 @@
             @foreach (IRoadToThere road in TenantContainer.Roads)
             {
                 <MudExpansionPanel Text="@road.ToString()">
-                    <RoadConfiguration Road="@road" />
+                    <RoadConfiguration Road="@road" OnSaveRoad="@OnSaveRoad" OnRemoveRoad="@OnRemoveRoad" />
                 </MudExpansionPanel>
                 <br />
             }
@@ -62,6 +62,13 @@
 
     [Parameter]
     public Action<ITenantContainer>? OnCreateRoad { get; set; }
+
+    [Parameter]
+    public Action<IRoadToThere>? OnSaveRoad { get; set; }
+
+    [Parameter]
+    public Action<Guid>? OnRemoveRoad { get; set; }
+
 
     [Parameter]
     public Action<ITenantContainer>? OnClick { get; set; }

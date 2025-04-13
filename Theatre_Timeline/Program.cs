@@ -1,3 +1,4 @@
+using Cropper.Blazor.Extensions;
 using MudBlazor.Services;
 using Theatre_Timeline.Contracts;
 using Theatre_Timeline.Services;
@@ -7,8 +8,22 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
+
+// Add server-side Blazor.
+// Configure the default connection string for SignalR.
+builder.Services.AddServerSideBlazor()
+    .AddHubOptions(options =>
+    {
+        // Set the maximum message size to 32 MB.
+        options.MaximumReceiveMessageSize = 32 * 1024 * 1000;
+    });
+
+// Add MudBlazor services.
 builder.Services.AddMudServices();
+
+// Add cropping services
+builder.Services.AddCropper();
+
 
 // Inject Settings
 builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
