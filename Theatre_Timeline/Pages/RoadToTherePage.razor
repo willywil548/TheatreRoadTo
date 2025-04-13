@@ -15,11 +15,11 @@
     return;
 }
 
-<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="align-content-center pa-6">
     @foreach (IRoadToThere road in tenant.Roads)
     {
         <MudTabPanel Text="@road?.Title">
-            <MudPaper Elevation="2" Class="align-content-center rounded-2 p-3">
+            <MudPaper Elevation="2" Class="p-3" >
                 <MudText>@road?.Description</MudText>
                 @for (int i = 0; i <= road?.Duration; i++)
                 {
