@@ -15,6 +15,13 @@
         <MudTextField @bind-Value="Road.Title" Label="Title" Variant="Variant.Text"></MudTextField>
         <MudTextField @bind-Value="Road.Description" Label="Description" Variant="Variant.Text"></MudTextField>
         <MudTextField @bind-Value="Road.RoadAdmin" Label="Admin" Variant="Variant.Text"></MudTextField>
+        <MudSelect @bind-Value="Road.RoadScope" Label="Select Scope" HelperText="Enum" OpenIcon="@Icons.Material.Filled.CalendarViewWeek" AdornmentColor="Color.Info">
+            @foreach (RoadScope item in Enum.GetValues(typeof(RoadScope)))
+            {
+                <MudSelectItem Value="@item">@item</MudSelectItem>
+            }
+        </MudSelect>
+        <MudNumericField @bind-Value="Road.RoadScopeLength" Label="Length of scope" Variant="Variant.Text" Min="0" Max="1000" />
         <MudTextField @bind-Value="Road.PageHostCssPath" Label="CSS" Variant="Variant.Text" Lines="10"></MudTextField>
         <code>@Road.TenantId</code>
     </MudCardContent>
@@ -38,6 +45,9 @@
         "Save Road",
         "Remove Road"
     };
+
+    private const string scopeLabel = "What is the scope of this road?";
+    private const string scopePlaceHolder = "Type of length";
 
     private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
 

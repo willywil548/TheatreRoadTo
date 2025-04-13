@@ -10,9 +10,9 @@
 <MudPaper Color="Color.Transparent" Elevation="0" Style="overflow:scroll; position:relative;">
     <MudDrawerContainer Class="mud-height-full">
         <MudDrawer @bind-Open="_drawerOpen"
-                   ClipMode="DrawerClipMode.Docked"
-                   Elevation="1"
-                   Anchor="Anchor.Top">
+        ClipMode="DrawerClipMode.Docked"
+        Elevation="1"
+        Anchor="Anchor.Top">
             <MudDrawerHeader>
                 <MudText Typo="Typo.h6">Tenant Manager</MudText>
             </MudDrawerHeader>
@@ -20,17 +20,17 @@
                 <MudButton OnClick="CreateTenant">Create Tenant</MudButton>
             </MudNavMenu>
         </MudDrawer>
-        <div class="d-flex justify-center align-center mud-height-full">
+        <div class="d-flex justify-center align-center mud-height-full mud-width-full">
             <MudExpansionPanels>
                 @foreach (ITenantContainer container in TenantManagerService.GetWebApps())
                 {
-                    <MudExpansionPanel Text="@container.TenantName">
+                    <MudExpansionPanel Text="@container.TenantName" Expanded="ShouldOpenPanel(container.TenantId.ToString())">
                         <TenantConfiguration TenantContainer="@container"
-                                             OnCreateRoad="CreateRoad"
-                                             OnRemoveTenant="RemoveTenant"
-                                             OnSaveRoad="SaveRoad"
-                                             OnRemoveRoad="RemoveRoad"
-                                             OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
+                        OnCreateRoad="CreateRoad"
+                        OnRemoveTenant="RemoveTenant"
+                        OnSaveRoad="SaveRoad"
+                        OnRemoveRoad="RemoveRoad"
+                        OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
                     </MudExpansionPanel>
 
                     <br />
@@ -115,5 +115,15 @@
         }
 
         return tenantContainer != null;
+    }
+
+    private bool ShouldOpenPanel(string tenant)
+    {
+        if (string.IsNullOrEmpty(this.Tenant))
+        {
+            return false;
+        }
+
+        return string.Equals(tenant, this.Tenant);
     }
 }
