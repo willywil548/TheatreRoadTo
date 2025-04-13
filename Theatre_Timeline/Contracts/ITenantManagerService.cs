@@ -4,7 +4,7 @@ namespace Theatre_TimeLine.Contracts
     {
         void CreateTenant(ITenantContainer tenant);
 
-        ITenantContainer[] GetWebApps();
+        ITenantContainer[] GetTenants();
 
         ITenantContainer? GetTenant(Guid guid);
 

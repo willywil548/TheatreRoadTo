@@ -93,12 +93,12 @@ namespace Theatre_TimeLine.Services
 
         public ITenantContainer? GetTenant(Guid guid)
         {
-            ITenantContainer[] tenantContainers = this.GetWebApps();
+            ITenantContainer[] tenantContainers = this.GetTenants();
             return tenantContainers.FirstOrDefault(c => c.TenantId.Equals(guid))
                 ?? tenantContainers.FirstOrDefault(c => c.Roads.Any(r => r.RoadId.Equals(guid)));
         }
 
-        public ITenantContainer[] GetWebApps()
+        public ITenantContainer[] GetTenants()
         {
             List<ITenantContainer> containers = [];
 

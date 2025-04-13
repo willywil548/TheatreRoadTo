@@ -1,54 +1,60 @@
 ﻿@namespace Theatre_TimeLine.Pages
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
-@page "/RoadToThere/{TenantId?}/{RoadId?}"
+@page "/RoadToThere/{TenantId?}"
 
 @inject ITenantManagerService TenantManagerService
 @inject NavigationManager NavigationManager
 
-@if (road is null)
+@if (tenant is null)
 {
     <MudText>Loading...</MudText>
     return;
 }
 
-<MudTimeline TimelinePosition="@TimelinePosition.Alternate">
-    <MudTimelineItem>
-        <MudText>Insert Poll here.</MudText>
-    </MudTimelineItem>
-    <MudTimelineItem>
-        <MudText Align="Align.End">Insert update to parents here.</MudText>
-    </MudTimelineItem>
-    <MudTimelineItem Color="Color.Primary">
-        <MudText>Insert Instagram Post here</MudText>
-    </MudTimelineItem>
-</MudTimeline>
-<MudTimeline TimelinePosition="@TimelinePosition.Alternate">
-    <MudTimelineItem>
-        <MudText>Insert Poll here.</MudText>
-    </MudTimelineItem>
-    <MudTimelineItem>
-        <MudText Align="Align.End">Insert update to parents here.</MudText>
-    </MudTimelineItem>
-    <MudTimelineItem Color="Color.Primary">
-        <MudText>Insert Instagram Post here</MudText>
-    </MudTimelineItem>
-</MudTimeline>
+<MudPaper Elevation="1">
+    <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+        @foreach (IRoadToThere road in tenant.Roads)
+        {
+            <MudTabPanel Text="@road?.Title">
+                <MudTimeline TimelinePosition="@TimelinePosition.Alternate">
+                    <MudTimelineItem>
+                        <MudText>Insert Poll here.</MudText>
+                    </MudTimelineItem>
+                    <MudTimelineItem>
+                        <MudText Align="Align.End">Insert update to parents here.</MudText>
+                    </MudTimelineItem>
+                    <MudTimelineItem Color="Color.Primary">
+                        <MudText>Insert Instagram Post here</MudText>
+                    </MudTimelineItem>
+                </MudTimeline>
+                <MudTimeline TimelinePosition="@TimelinePosition.Alternate">
+                    <MudTimelineItem>
+                        <MudText>Insert Poll here.</MudText>
+                    </MudTimelineItem>
+                    <MudTimelineItem>
+                        <MudText Align="Align.End">Insert update to parents here.</MudText>
+                    </MudTimelineItem>
+                    <MudTimelineItem Color="Color.Primary">
+                        <MudText>Insert Instagram Post here</MudText>
+                    </MudTimelineItem>
+                </MudTimeline>
+            </MudTabPanel>
+        }
+    </MudTabs>
+</MudPaper>
 
 @code {
 
-    private IRoadToThere? road;
+    private ITenantContainer? tenant;
 
     [Parameter]
     public string? TenantId { get; set; } = string.Empty;
 
-    [Parameter]
-    public string? RoadId { get; set; } = string.Empty;
-
     protected override async Task OnInitializedAsync()
     {
 
-        if (string.IsNullOrEmpty(TenantId) || string.IsNullOrEmpty(RoadId))
+        if (string.IsNullOrEmpty(TenantId))
         {
             UriBuilder uri = new (NavigationManager.BaseUri);
             uri.Path = $"RoadToThere/{Theatre_TimeLine.Services.TenantManagerService.DemoGuid}/{Theatre_TimeLine.Services.TenantManagerService.DemoGuid}";
@@ -61,8 +67,7 @@
             return;
         }
 
-        road = TenantManagerService.GetTenant(Guid.Parse(TenantId))?.GetRoad(Guid.Parse(RoadId));
-
+        tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId));
         await base.OnInitializedAsync();
     }
 }

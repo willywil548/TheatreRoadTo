@@ -113,10 +113,10 @@
                 Road.EndTime = Road.StartTime?.AddDays((Road.RoadScopeLength * 7) - 1);
                 break;
             case RoadScope.Month:
-                Road.EndTime = Road.StartTime?.AddMonths(Road.RoadScopeLength);
+                Road.EndTime = Road.StartTime?.AddMonths(Road.RoadScopeLength).AddDays(-1);
                 break;
             case RoadScope.Year:
-                Road.EndTime = Road.StartTime?.AddYears(Road.RoadScopeLength);
+                Road.EndTime = Road.StartTime?.AddYears(Road.RoadScopeLength).AddDays(-1);
                 break;
         }
     }
