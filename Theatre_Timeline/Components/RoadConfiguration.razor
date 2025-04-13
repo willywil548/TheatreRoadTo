@@ -10,7 +10,7 @@
     <MudCardHeader Class="card card-header">@this.Road.ToString()</MudCardHeader>
     <MudCardContent>
         <h6>ID: @Road.RoadId</h6>
-        <MudDatePicker Label="Start Date" @bind-Date="Road.StartTime" />
+        <MudDatePicker Label="Start Date" @bind-Date="startTime" />
         <MudTextField @bind-Value="Road.Title" Label="Title" Variant="Variant.Text"></MudTextField>
         <MudTextField @bind-Value="Road.Description" Label="Description" Variant="Variant.Text"></MudTextField>
         <MudTextField @bind-Value="Road.RoadAdmin" Label="Admin" Variant="Variant.Text"></MudTextField>
@@ -88,6 +88,16 @@
         set
         {
             Road.RoadScopeLength = value;
+            ScopeChanged();
+        }
+    }
+
+    private DateTime startTime
+    {
+        get => Road.StartTime ?? DateTime.Now;
+        set
+        {
+            Road.StartTime = value;
             ScopeChanged();
         }
     }
