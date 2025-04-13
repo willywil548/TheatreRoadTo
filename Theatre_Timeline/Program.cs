@@ -1,7 +1,7 @@
 using Cropper.Blazor.Extensions;
 using MudBlazor.Services;
-using Theatre_Timeline.Contracts;
-using Theatre_Timeline.Services;
+using Theatre_TimeLine.Contracts;
+using Theatre_TimeLine.Services;
 using Theatre_TimeLine.Services;
 
 var builder = WebApplication.CreateBuilder(args);

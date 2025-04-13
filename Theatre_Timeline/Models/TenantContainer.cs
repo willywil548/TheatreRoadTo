@@ -1,4 +1,4 @@
-using Theatre_Timeline.Contracts;
+using Theatre_TimeLine.Contracts;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Diagnostics;

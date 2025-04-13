@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Theatre_Timeline.Contracts
+namespace Theatre_TimeLine.Contracts
 {
     public interface ITenantContainer : IRoadToThereManager
     {

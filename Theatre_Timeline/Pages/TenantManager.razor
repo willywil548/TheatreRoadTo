@@ -1,8 +1,9 @@
-@using Theatre_TimeLine.Services
-@using Theatre_Timeline.Contracts
+@using Theatre_TimeLine.Components
+@using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
-@using Theatre_Timeline.Components
+@using Theatre_TimeLine.Services
 @inject ITenantManagerService TenantManagerService
+@inject NavigationManager NavigationManager
 @implements IRoadToThereManager
 
 @page "/TenantManagement/{Tenant?}"
@@ -24,7 +25,7 @@
             <MudExpansionPanels>
                 @foreach (ITenantContainer container in TenantManagerService.GetWebApps())
                 {
-                    <MudExpansionPanel Text="@container.TenantName" Expanded="ShouldOpenPanel(container.TenantId.ToString())">
+                    <MudExpansionPanel Text="@container.TenantName" Expanded="ShouldOpenPanel(container.TenantId.ToString())" ExpandedChanged="(changedArgs) => OnPanelChange(tenantId: container.TenantId.ToString(), changedArgs)">
                         <TenantConfiguration TenantContainer="@container"
                         OnCreateRoad="CreateRoad"
                         OnRemoveTenant="RemoveTenant"
@@ -125,5 +126,17 @@
         }
 
         return string.Equals(tenant, this.Tenant);
+    }
+
+    private void OnPanelChange(string tenantId, bool expanding)
+    {
+        if (!expanding)
+        {
+            return;
+        }
+
+        UriBuilder uri = new(NavigationManager.BaseUri);
+        uri.Path = $"TenantManagement/{tenantId}";
+        NavigationManager.NavigateTo(uri.Uri.AbsoluteUri);
     }
 }

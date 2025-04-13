@@ -1,7 +1,7 @@
-﻿@using Theatre_Timeline.Contracts
+﻿@using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
-@using Theatre_Timeline.Services
-@namespace Theatre_Timeline.Components
+@using Theatre_TimeLine.Services
+@namespace Theatre_TimeLine.Components
 
 @inject IClipboardService ClipboardService
 @inject NavigationManager NavigationManager
@@ -11,19 +11,31 @@
     <MudCardContent>
         <h6>ID: @Road.RoadId</h6>
         <MudDatePicker Label="Start Date" @bind-Date="Road.StartTime" />
-        <MudDatePicker Label="End Date" @bind-Date="Road.EndTime" />
         <MudTextField @bind-Value="Road.Title" Label="Title" Variant="Variant.Text"></MudTextField>
         <MudTextField @bind-Value="Road.Description" Label="Description" Variant="Variant.Text"></MudTextField>
         <MudTextField @bind-Value="Road.RoadAdmin" Label="Admin" Variant="Variant.Text"></MudTextField>
-        <MudSelect @bind-Value="Road.RoadScope" Label="Select Scope" HelperText="Enum" OpenIcon="@Icons.Material.Filled.CalendarViewWeek" AdornmentColor="Color.Info">
+        <MudSelect @bind-Value="roadScope"
+        Label="Select Scope"
+        HelperText="In terms of measurement, how many ? should this last."
+        OpenIcon="@Icons.Material.Filled.CalendarViewWeek"
+        AdornmentColor="Color.Info"
+        >
             @foreach (RoadScope item in Enum.GetValues(typeof(RoadScope)))
             {
                 <MudSelectItem Value="@item">@item</MudSelectItem>
             }
         </MudSelect>
-        <MudNumericField @bind-Value="Road.RoadScopeLength" Label="Length of scope" Variant="Variant.Text" Min="0" Max="1000" />
+        <MudNumericField @bind-Value="roadScopeLength"
+        Label="Length of scope"
+        Variant="Variant.Text"
+        Min="1"
+        Max="1000"
+        HelperText="How many of the measurement in the scope should it last?"
+        />
+        <MudDatePicker Label="End Date" @bind-Date="Road.EndTime" />
         <MudTextField @bind-Value="Road.PageHostCssPath" Label="CSS" Variant="Variant.Text" Lines="10"></MudTextField>
-        <code>@Road.TenantId</code>
+        <br />
+        ID: <code>@Road.TenantId</code>
     </MudCardContent>
     <MudCardActions>
         <MudButton Color="Color.Primary" OnClick="CopyButtonClicked">Copy Location</MudButton>
@@ -59,6 +71,45 @@
 
     [Parameter]
     public Action<Guid>? OnRemoveRoad { get; set; }
+
+    private RoadScope roadScope
+    {
+        get => Road.RoadScope;
+        set
+        {
+            Road.RoadScope = value;
+            ScopeChanged();
+        }
+    }
+
+    private int roadScopeLength
+    {
+        get => Road.RoadScopeLength;
+        set
+        {
+            Road.RoadScopeLength = value;
+            ScopeChanged();
+        }
+    }
+
+    private void ScopeChanged()
+    {
+        switch (Road.RoadScope)
+        {
+            case RoadScope.Day:
+                Road.EndTime = Road.StartTime?.AddDays(Road.RoadScopeLength);
+                break;
+            case RoadScope.Week:
+                Road.EndTime = Road.StartTime?.AddDays((Road.RoadScopeLength * 7) - 1);
+                break;
+            case RoadScope.Month:
+                Road.EndTime = Road.StartTime?.AddMonths(Road.RoadScopeLength);
+                break;
+            case RoadScope.Year:
+                Road.EndTime = Road.StartTime?.AddYears(Road.RoadScopeLength);
+                break;
+        }
+    }
 
     private void CopyButtonClicked()
     {

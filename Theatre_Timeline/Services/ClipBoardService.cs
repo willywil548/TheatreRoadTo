@@ -1,6 +1,6 @@
 ﻿using Microsoft.JSInterop;
 
-namespace Theatre_Timeline.Services
+namespace Theatre_TimeLine.Services
 {
     /// <summary>
     /// Clipboard service.

@@ -1,4 +1,4 @@
-using Theatre_Timeline.Contracts;
+using Theatre_TimeLine.Contracts;
 
 namespace Theatre_TimeLine.Models
 {
@@ -61,7 +61,7 @@ namespace Theatre_TimeLine.Models
         /// <summary>
         /// Gets or sets the length of the road.
         /// </summary>
-        public int RoadScopeLength { get; set; }
+        public int RoadScopeLength { get; set; } = 1;
 
         public override string ToString()
         {

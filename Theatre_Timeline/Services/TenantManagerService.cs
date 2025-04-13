@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Theatre_Timeline.Contracts;
+using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Models;
 
 namespace Theatre_TimeLine.Services

@@ -1,4 +1,4 @@
-﻿namespace Theatre_Timeline.Contracts
+﻿namespace Theatre_TimeLine.Contracts
 {
     public interface IRoadToThereManager
     {

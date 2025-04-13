@@ -1,6 +1,6 @@
 using System.ComponentModel;
 
-namespace Theatre_Timeline.Contracts
+namespace Theatre_TimeLine.Contracts
 {
     public enum RoadScope
     {
