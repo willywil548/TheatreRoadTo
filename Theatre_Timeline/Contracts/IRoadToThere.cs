@@ -1,5 +1,3 @@
-using System.ComponentModel;
-
 namespace Theatre_TimeLine.Contracts
 {
     public enum RoadScope
@@ -71,5 +69,11 @@ namespace Theatre_TimeLine.Contracts
         /// Gets the duration of the road.
         /// </summary>
         int Duration { get; }
+
+        /// <summary>
+        /// Gets the address.
+        /// </summary>
+        /// <returns>An array of <see cref="IAddress"/>.</returns>
+        IAddress[] Addresses { get; set; }
     }
 }

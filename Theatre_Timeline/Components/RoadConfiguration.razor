@@ -1,10 +1,16 @@
-﻿@using Theatre_TimeLine.Contracts
+﻿@using System.Diagnostics
+@using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
 @using Theatre_TimeLine.Services
+@using Cropper.Blazor.Extensions
+@using Cropper.Blazor.Models
 @namespace Theatre_TimeLine.Components
 
 @inject IClipboardService ClipboardService
 @inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject IConfiguration Configuration
+@inject ITenantManagerService TenantManagerService
 
 <MudCard>
     <MudCardHeader Class="card card-header">@this.Road.ToString()</MudCardHeader>
@@ -18,8 +24,7 @@
         Label="Select Scope"
         HelperText="In terms of measurement, how many ? should this last."
         OpenIcon="@Icons.Material.Filled.CalendarViewWeek"
-        AdornmentColor="Color.Info"
-        >
+        AdornmentColor="Color.Info">
             @foreach (RoadScope item in Enum.GetValues(typeof(RoadScope)))
             {
                 <MudSelectItem Value="@item">@item</MudSelectItem>
@@ -34,6 +39,34 @@
         />
         <MudDatePicker Label="End Date" @bind-Date="Road.EndTime" />
         <MudTextField @bind-Value="Road.PageHostCssPath" Label="CSS" Variant="Variant.Text" Lines="10"></MudTextField>
+        @if (bannerFilePath != null)
+        {
+            <CropperComponent Class="img-container" Src="@bannerFilePath" @ref="cropperComponent" Options="new Cropper.Blazor.Models.Options()" />
+            <MudButton Class="button" @onclick="GetCroppedCanvasDataURLAsync">
+                Crop Image
+            </MudButton>
+            @if (croppedCanvasDataURL != null)
+            {
+                <br />
+                <img class="big-image" src="@croppedCanvasDataURL" />
+                <br />
+                <MudButton Class="button" @onclick="SaveBanner">
+                    Save Image
+                </MudButton>
+            }
+        }
+        else
+        {
+            <br />
+            <img class="big-image" src="@Road.Banner" />
+            <br />
+            <MudFileUpload T="IBrowserFile" FilesChanged="UploadFiles">
+                <ActivatorContent>
+                    <MudButton Color="Color.Tertiary" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Image">Upload banner image</MudButton>
+                </ActivatorContent>
+            </MudFileUpload>
+        }
+
         <br />
         ID: <code>@Road.TenantId</code>
     </MudCardContent>
@@ -52,14 +85,18 @@
 </MudCard>
 
 @code {
+    private const string scopeLabel = "What is the scope of this road?";
+    private const string scopePlaceHolder = "Type of length";
     private static readonly string[] tenantActions =
     {
         "Save Road",
         "Remove Road"
     };
 
-    private const string scopeLabel = "What is the scope of this road?";
-    private const string scopePlaceHolder = "Type of length";
+    private CropperComponent? cropperComponent = null!;
+    private string? croppedCanvasDataURL;
+
+    private string? bannerFilePath = null;
 
     private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
 
@@ -71,6 +108,18 @@
 
     [Parameter]
     public Action<Guid>? OnRemoveRoad { get; set; }
+
+    private async Task GetCroppedCanvasDataURLAsync()
+    {
+        GetCroppedCanvasOptions getCroppedCanvasOptions = new GetCroppedCanvasOptions
+            {
+                MaxHeight = 4096,
+                MaxWidth = 4096,
+                ImageSmoothingQuality = ImageSmoothingQuality.High.ToEnumString()
+            };
+
+        croppedCanvasDataURL = await cropperComponent!.GetCroppedCanvasDataURLAsync(getCroppedCanvasOptions);
+    }
 
     private RoadScope roadScope
     {
@@ -144,5 +193,46 @@
                 OnRemoveRoad?.Invoke(Road.RoadId);
                 break;
         }
+    }
+
+    private async Task UploadFiles(IBrowserFile file)
+    {
+        croppedCanvasDataURL = null;
+        string? webRootPath = Configuration["WebRootPath"];
+
+        if (string.IsNullOrEmpty(webRootPath))
+        {
+            webRootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
+        }
+
+        string tempFileName = Path.Combine(webRootPath, "temp", file.Name);
+        FileInfo fi = new FileInfo(tempFileName);
+        fi.Directory?.Create();
+        Trace.WriteLine($"Uploading {file.Name} to {tempFileName}");
+        using (var stream = new FileStream(tempFileName, FileMode.Create))
+        using (var fileStream = file.OpenReadStream())
+        {
+            await fileStream.CopyToAsync(stream);
+        }
+
+        bannerFilePath = tempFileName.Replace(
+            Path.Combine(webRootPath),
+            string.Empty).Replace("\\", "/");
+        Snackbar.Add("File uploaded. Please crop and accept.", Severity.Success);
+
+        await Task.CompletedTask;
+    }
+
+    private void SaveBanner()
+    {
+        if (croppedCanvasDataURL == null)
+        {
+            return;
+        }
+
+        Road.Banner = croppedCanvasDataURL;
+        TenantManagerService.SaveRoad(Road);
+        croppedCanvasDataURL = null;
+        this.StateHasChanged();
     }
 }

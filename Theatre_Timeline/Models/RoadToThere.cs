@@ -109,6 +109,8 @@ namespace Theatre_TimeLine.Models
             }
         }
 
+        public IAddress[] Addresses { get; set; } = Array.Empty<IAddress>();
+
         public override string ToString()
         {
             return $"{Title} - {this.StartTime?.ToString("dd-MMM-yy")}==>{this.EndTime?.ToString("dd-MMM-yy")}";

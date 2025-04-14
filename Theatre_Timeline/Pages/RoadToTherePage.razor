@@ -21,6 +21,7 @@
         <MudTabPanel Text="@road?.Title">
             <MudPaper Elevation="2" Class="p-3" >
                 <MudText>@road?.Description</MudText>
+                <img src="@road?.Banner" />
                 @for (int i = 0; i <= road?.Duration; i++)
                 {
                     <Block Road="road" BlockIndex="i" />

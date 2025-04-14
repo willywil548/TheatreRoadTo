@@ -47,8 +47,10 @@ namespace Theatre_TimeLine.Services
 
         public void CreateTenant(ITenantContainer tenant)
         {
-            string tenantPath = Path.Combine(this.dataPath, tenant.TenantId.ToString());
-            FileInfo tenantConfigurationFileInfo = new(Path.Combine(tenantPath, tenantConfigurationFile));
+            FileInfo tenantConfigurationFileInfo = new(
+                Path.Combine(
+                    this.GetTenantRootPath(tenant.TenantId),
+                    tenantConfigurationFile));
             if (tenantConfigurationFileInfo.Exists)
             {
                 tenantConfigurationFileInfo.Delete();
@@ -61,8 +63,7 @@ namespace Theatre_TimeLine.Services
 
         public void RemoveTenant(Guid guid)
         {
-            string tenantPath = Path.Combine(this.dataPath, guid.ToString());
-            DirectoryInfo tenantDirectory = new(tenantPath);
+            DirectoryInfo tenantDirectory = new(this.GetTenantRootPath(guid));
             if (tenantDirectory.Exists)
             {
                 tenantDirectory.Delete(recursive: true);
@@ -166,6 +167,11 @@ namespace Theatre_TimeLine.Services
             };
 
             this.SaveRoad(roadToThere);
+        }
+
+        public string GetTenantRootPath(Guid tenantId)
+        {
+            return Path.Combine(this.dataPath, tenantId.ToString());
         }
     }
 }
