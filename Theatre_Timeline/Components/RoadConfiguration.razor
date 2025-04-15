@@ -69,12 +69,18 @@
 
         <!-- Create Addresses -->
         <MudPaper>
+            <MudSelect @bind-Value="address.AddressType" Label="Type of Post" HelperText="Notification, Video, Social Media" OpenIcon="@Icons.Material.Filled.QuestionMark" AdornmentColor="Color.Secondary">
+                @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
+                {
+                    <MudSelectItem Value="@item">@item</MudSelectItem>
+                }
+            </MudSelect>
             <MudDatePicker Label="Date of Event" @bind-Date="address.Location" />
-            <MudTimePicker Label="Time of Event" AmPm="true" @bind-Time="Time" />
+            <MudTimePicker Label="Time of Event" AmPm="true" TimeChanged="(time) => OnTimeChange(time)" />
             <MudTextField @bind-Value="address.Title" Label="Title" Variant="Variant.Text"></MudTextField>
             <MudTextField @bind-Value="address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
             <MudTextField @bind-Value="address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
-            <MudField @bind-Value="address.DelayRelease" Label="Delay Announcement" Variant="Variant.Text"></MudField>
+            <MudCheckBox @bind-Value="address.DelayRelease" Label="Delay Release"></MudCheckBox>
             <MudButton Color="Color.Primary" OnClick="AddAddress">Add Address</MudButton>
         </MudPaper>
 
@@ -270,5 +276,15 @@
         // Save to file
         TenantManagerService.SaveRoad(Road);
         this.StateHasChanged();
+    }
+
+    private void OnTimeChange(TimeSpan? time)
+    {
+        if (time == null || address.Location == null)
+        {
+            return;
+        }
+
+        address.Location = address.Location.Value.Date.Add(time.Value);
     }
 }
