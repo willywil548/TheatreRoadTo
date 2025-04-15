@@ -1,3 +1,5 @@
+using Theatre_TimeLine.Models;
+
 namespace Theatre_TimeLine.Contracts
 {
     public enum RoadScope
@@ -74,6 +76,6 @@ namespace Theatre_TimeLine.Contracts
         /// Gets the address.
         /// </summary>
         /// <returns>An array of <see cref="IAddress"/>.</returns>
-        IAddress[] Addresses { get; set; }
+        Address[] Addresses { get; set; }
     }
 }

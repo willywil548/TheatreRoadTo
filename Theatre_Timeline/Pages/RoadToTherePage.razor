@@ -15,20 +15,22 @@
     return;
 }
 
-<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="align-content-center pa-6">
-    @foreach (IRoadToThere road in tenant.Roads)
-    {
-        <MudTabPanel Text="@road?.Title">
-            <MudPaper Elevation="2" Class="p-3" >
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true">
+    <div style="margin: auto;width: 75%;padding: 10px;">
+        @foreach (IRoadToThere road in tenant.Roads)
+        {
+            <MudTabPanel Text="@road?.Title">
                 <MudText>@road?.Description</MudText>
-                <img src="@road?.Banner" />
-                @for (int i = 0; i <= road?.Duration; i++)
-                {
-                    <Block Road="road" BlockIndex="i" />
-                }
-            </MudPaper>
-        </MudTabPanel>
-    }
+                <img src="@road?.Banner" alt="@road?.Description" style="margin: auto;width: 75%;padding: 10px;" />
+                <MudTimeline>
+                    @for (int i = 0; i <= road?.Duration; i++)
+                    {
+                        <Block Road="road" BlockIndex="i" Class="align-content-center" />
+                    }
+                </MudTimeline>
+            </MudTabPanel>
+        }
+    </div>
 </MudTabs>
 
 @code {

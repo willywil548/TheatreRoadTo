@@ -5,6 +5,11 @@ namespace Theatre_TimeLine.Models
     public class Address : IAddress
     {
         /// <summary>
+        /// Gets or sets the location.
+        /// </summary>
+        public DateTime? Location { get; set; } = DateTime.Now;
+
+        /// <summary>
         /// Gets or sets the title.
         /// </summary>
         public string Title { get; set; } = string.Empty;
@@ -27,6 +32,11 @@ namespace Theatre_TimeLine.Models
         /// <summary>
         /// Gets or sets the tags.
         /// </summary>
-        public string Tags { get; set; } = string.Empty;
+        public IEnumerable<string> Tags { get; set; } = Enumerable.Empty<string>();
+
+        /// <summary>
+        /// Gets or sets the delay release.
+        /// </summary>
+        public bool DelayRelease { get; set; } = false;
     }
 }

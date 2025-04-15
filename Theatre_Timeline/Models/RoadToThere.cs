@@ -109,7 +109,7 @@ namespace Theatre_TimeLine.Models
             }
         }
 
-        public IAddress[] Addresses { get; set; } = Array.Empty<IAddress>();
+        public Address[] Addresses { get; set; } = Array.Empty<Address>();
 
         public override string ToString()
         {

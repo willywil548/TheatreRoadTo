@@ -35,10 +35,10 @@
         Variant="Variant.Text"
         Min="1"
         Max="1000"
-        HelperText="How many of the measurement in the scope should it last?"
-        />
+        HelperText="How many of the measurement in the scope should it last?" />
         <MudDatePicker Label="End Date" @bind-Date="Road.EndTime" />
-        <MudTextField @bind-Value="Road.PageHostCssPath" Label="CSS" Variant="Variant.Text" Lines="10"></MudTextField>
+        <!-- <MudTextField @bind-Value="Road.PageHostCssPath" Label="CSS" Variant="Variant.Text" Lines="10"></MudTextField>-->
+        <!-- Add picture as a banner -->
         @if (bannerFilePath != null)
         {
             <CropperComponent Class="img-container" Src="@bannerFilePath" @ref="cropperComponent" Options="new Cropper.Blazor.Models.Options()" />
@@ -66,6 +66,17 @@
                 </ActivatorContent>
             </MudFileUpload>
         }
+
+        <!-- Create Addresses -->
+        <MudPaper>
+            <MudDatePicker Label="Date of Event" @bind-Date="address.Location" />
+            <MudTimePicker Label="Time of Event" AmPm="true" @bind-Time="Time" />
+            <MudTextField @bind-Value="address.Title" Label="Title" Variant="Variant.Text"></MudTextField>
+            <MudTextField @bind-Value="address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
+            <MudTextField @bind-Value="address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
+            <MudField @bind-Value="address.DelayRelease" Label="Delay Announcement" Variant="Variant.Text"></MudField>
+            <MudButton Color="Color.Primary" OnClick="AddAddress">Add Address</MudButton>
+        </MudPaper>
 
         <br />
         ID: <code>@Road.TenantId</code>
@@ -97,8 +108,21 @@
     private string? croppedCanvasDataURL;
 
     private string? bannerFilePath = null;
+    private Address address = new Address();
 
     private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
+    private TimeSpan? Time
+    {
+        get => address?.Location?.TimeOfDay ?? TimeSpan.Zero;
+        set
+        {
+            if (address.Location != null)
+            {
+                TimeSpan time = value ?? TimeSpan.Zero;
+                address.Location = address.Location?.Add(time);
+            }
+        }
+    }
 
     [Parameter]
     public IRoadToThere Road { get; set; } = new RoadToThere();
@@ -233,6 +257,18 @@
         Road.Banner = croppedCanvasDataURL;
         TenantManagerService.SaveRoad(Road);
         croppedCanvasDataURL = null;
+        this.StateHasChanged();
+    }
+
+    private void AddAddress()
+    {
+        List<Address> addresses = new List<Address>(Road.Addresses);
+        addresses.Add(address);
+        Road.Addresses = addresses.ToArray();
+        address = new Address();
+
+        // Save to file
+        TenantManagerService.SaveRoad(Road);
         this.StateHasChanged();
     }
 }

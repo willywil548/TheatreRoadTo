@@ -17,6 +17,11 @@
     public interface IAddress
     {
         /// <summary>
+        /// Gets or sets the location.
+        /// </summary>
+        DateTime? Location { get; set; }
+
+        /// <summary>
         /// Gets or sets the title.
         /// </summary>
         string Title { get; set; }
@@ -39,6 +44,11 @@
         /// <summary>
         /// Gets or sets the tags.
         /// </summary>
-        string Tags { get; set; }
+        IEnumerable<string> Tags { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to delay the release of the address.
+        /// </summary>
+        bool DelayRelease { get; set; }
     }
 }

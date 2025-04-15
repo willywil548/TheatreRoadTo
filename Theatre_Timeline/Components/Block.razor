@@ -1,24 +1,47 @@
 ﻿@namespace Theatre_TimeLine.Components
+@using Theatre_TimeLine.Models
 @using Theatre_TimeLine.Contracts
+@using System.Linq
+@inherits LayoutComponentBase
 
-<MudTimeline TimelinePosition="@TimelinePosition.Start">
-    @if (ShouldRenderTimeSeparator())
-    {
-        <MudTimelineItem>
-            <MudText>@GetRoadDatePart()</MudText>
-        </MudTimelineItem>
-    }
-</MudTimeline>
+@if (ShouldRenderTimeSeparator())
+{
+    <MudTimelineItem Class="@Class">
+        <MudText>@GetRoadDatePart()</MudText>
+    </MudTimelineItem>
+}
+
+@foreach (var item in this.GetAddresses())
+{
+    <MudTimelineItem Size="Size.Small" Color="GetColor(item)">
+        <ItemOpposite>
+            <MudText Color="Color.Info">@item.Location</MudText>
+        </ItemOpposite>
+        <ItemContent>
+            <MudCard Outlined="true" Class="p-2">
+                <MudText Color="Color.Info" Class="align-content-center">@item.Title</MudText>
+                <MudText Class="align-content-center">@item.Description</MudText>
+                <MudText Class="align-content-center">@item.Content</MudText>
+            </MudCard>
+        </ItemContent>
+    </MudTimelineItem>
+}
 
 @code {
 
     private int measurement = 24;
 
     [Parameter]
-    public IRoadToThere? Road { get; set; }
+    public IRoadToThere Road { get; set; } = new RoadToThere();
 
     [Parameter]
     public int BlockIndex { get; set; }
+
+    [Parameter]
+    public string? Style { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
 
     protected override Task OnParametersSetAsync()
     {
@@ -94,6 +117,46 @@
 
     private bool ShouldRenderTimeSeparator()
     {
-        return BlockIndex % measurement == 0;
+        return BlockIndex == 0
+        || BlockIndex == Road.Duration;
+    }
+
+    private IEnumerable<IAddress> GetAddresses()
+    {
+        if (Road is null)
+        {
+            return Enumerable.Empty<IAddress>();
+        }
+
+        if (!Road.StartTime.HasValue)
+        {
+            return Enumerable.Empty<IAddress>();
+        }
+
+        DateTime blockRange = Road.RoadScope == RoadScope.Day
+            ? Road.StartTime.Value.AddHours(BlockIndex)
+            : Road.StartTime.Value.AddDays(BlockIndex);
+
+        if (blockRange > Road.EndTime)
+        {
+            return Enumerable.Empty<IAddress>();
+        }
+
+        return Road.Addresses
+            .Where(x => x.Location <= blockRange.AddHours(24).AddSeconds(-1) && x.Location >= blockRange)
+            .OrderByDescending(x => x.Location);
+    }
+
+    private Color GetColor(IAddress address)
+    {
+        switch (address.AddressType)
+        {
+            case AddressType.SocialMedia:
+                return Color.Primary;
+            case AddressType.Notification:
+                return Color.Success;
+            default:
+                return Color.Tertiary;
+        }
     }
 }
