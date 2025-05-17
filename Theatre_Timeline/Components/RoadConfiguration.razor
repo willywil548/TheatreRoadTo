@@ -21,27 +21,30 @@
         <MudTextField @bind-Value="Road.Description" Label="Description" Variant="Variant.Text"></MudTextField>
         <MudTextField @bind-Value="Road.RoadAdmin" Label="Admin" Variant="Variant.Text"></MudTextField>
         <MudSelect @bind-Value="roadScope"
-        Label="Select Scope"
-        HelperText="In terms of measurement, how many ? should this last."
-        OpenIcon="@Icons.Material.Filled.CalendarViewWeek"
-        AdornmentColor="Color.Info">
+            Label="Select Scope"
+            HelperText="In terms of measurement, how many ? should this last."
+            OpenIcon="@Icons.Material.Filled.CalendarViewWeek"
+            AdornmentColor="Color.Info">
             @foreach (RoadScope item in Enum.GetValues(typeof(RoadScope)))
             {
                 <MudSelectItem Value="@item">@item</MudSelectItem>
             }
         </MudSelect>
         <MudNumericField @bind-Value="roadScopeLength"
-        Label="Length of scope"
-        Variant="Variant.Text"
-        Min="1"
-        Max="1000"
-        HelperText="How many of the measurement in the scope should it last?" />
+            Label="Length of scope"
+            Variant="Variant.Text"
+            Min="1"
+            Max="1000"
+            HelperText="How many of the measurement in the scope should it last?" />
         <MudDatePicker Label="End Date" @bind-Date="Road.EndTime" />
         <!-- <MudTextField @bind-Value="Road.PageHostCssPath" Label="CSS" Variant="Variant.Text" Lines="10"></MudTextField>-->
         <!-- Add picture as a banner -->
         @if (bannerFilePath != null)
         {
-            <CropperComponent Class="img-container" Src="@bannerFilePath" @ref="cropperComponent" Options="new Cropper.Blazor.Models.Options()" />
+            <div class="img-container">
+                <CropperComponent Class="big-img" Src="@bannerFilePath" @ref="cropperComponent" Options="cropperOptions" />
+            </div>
+
             <MudButton Class="button" @onclick="GetCroppedCanvasDataURLAsync">
                 Crop Image
             </MudButton>
@@ -68,21 +71,6 @@
         }
 
         <!-- Create Addresses -->
-        <MudPaper>
-            <MudSelect @bind-Value="address.AddressType" Label="Type of Post" HelperText="Notification, Video, Social Media" OpenIcon="@Icons.Material.Filled.QuestionMark" AdornmentColor="Color.Secondary">
-                @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
-                {
-                    <MudSelectItem Value="@item">@item</MudSelectItem>
-                }
-            </MudSelect>
-            <MudDatePicker Label="Date of Event" @bind-Date="address.Location" />
-            <MudTimePicker Label="Time of Event" AmPm="true" TimeChanged="(time) => OnTimeChange(time)" />
-            <MudTextField @bind-Value="address.Title" Label="Title" Variant="Variant.Text"></MudTextField>
-            <MudTextField @bind-Value="address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
-            <MudTextField @bind-Value="address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
-            <MudCheckBox @bind-Value="address.DelayRelease" Label="Delay Release"></MudCheckBox>
-            <MudButton Color="Color.Primary" OnClick="AddAddress">Add Address</MudButton>
-        </MudPaper>
 
         <br />
         ID: <code>@Road.TenantId</code>
@@ -109,6 +97,29 @@
         "Save Road",
         "Remove Road"
     };
+
+    // Minimum and maximum cropped dimensions settings
+    private static decimal minCroppedWidth = 320;
+    private static decimal minCroppedHeight = 160;
+    private static decimal maxCroppedWidth = 640;
+    private static decimal maxCroppedHeight = 320;
+
+    private static readonly Options cropperOptions = new Options
+        {
+            AspectRatio = (decimal)20 / 5,
+            ViewMode = ViewMode.Vm2,
+            Responsive = true,
+            CheckOrientation = true,
+            CropBoxResizable = true,
+            CropBoxMovable = true,
+            MinCropBoxWidth = 100,
+            MinCropBoxHeight = 70,
+            SetDataOptions = new SetDataOptions
+            {
+                Width = (minCroppedWidth + maxCroppedWidth) / 2,
+                Height = (minCroppedHeight + maxCroppedHeight) / 2
+            },
+        };
 
     private CropperComponent? cropperComponent = null!;
     private string? croppedCanvasDataURL;
@@ -263,28 +274,7 @@
         Road.Banner = croppedCanvasDataURL;
         TenantManagerService.SaveRoad(Road);
         croppedCanvasDataURL = null;
+        this.bannerFilePath = null;
         this.StateHasChanged();
-    }
-
-    private void AddAddress()
-    {
-        List<Address> addresses = new List<Address>(Road.Addresses);
-        addresses.Add(address);
-        Road.Addresses = addresses.ToArray();
-        address = new Address();
-
-        // Save to file
-        TenantManagerService.SaveRoad(Road);
-        this.StateHasChanged();
-    }
-
-    private void OnTimeChange(TimeSpan? time)
-    {
-        if (time == null || address.Location == null)
-        {
-            return;
-        }
-
-        address.Location = address.Location.Value.Date.Add(time.Value);
     }
 }

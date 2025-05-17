@@ -9,37 +9,6 @@
 <MudDialogProvider/>
 <MudSnackbarProvider/>
 
-<style>
-    .big-img {
-        max-height: 250px;
-        /* This rule is very important, please don't ignore this */
-        max-width: 100%;
-    }
-
-    .img-container {
-        max-height: 250px;
-        width: 100%;
-    }
-
-    /* Means that the cropped image will take up 100% of the width of its containing element */
-    .cropped-img-container {
-        width: 100%;
-    }
-
-    /* These styles are just needed for a nice button and don't related with cropper component */
-    .button {
-        display: inline-block;
-        padding: 10px 20px;
-        background-color: #007bff;
-        color: #fff;
-        border: none;
-        border-radius: 5px;
-        text-align: center;
-        text-decoration: none;
-        font-size: 16px;
-        cursor: pointer;
-    }
-</style>
 
 <div class="page" @onkeyup="SetKey">
     <div class="sidebar">

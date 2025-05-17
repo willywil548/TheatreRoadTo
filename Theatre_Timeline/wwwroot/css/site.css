@@ -59,6 +59,22 @@ a, .btn-link {
     color: white;
 }
 
-    .blazor-error-boundary::after {
-        content: "An error has occurred."
-    }
+.blazor-error-boundary::after {
+    content: "An error has occurred."
+}
+
+.big-img {
+    max-height: 30%;
+    /* This rule is very important, please don't ignore this */
+    max-width: 70%;
+}
+
+.img-container {
+    max-height: 30%;
+    width: 70%;
+}
+
+/* Means that the cropped image will take up 100% of the width of its containing element */
+.cropped-img-container {
+    width: 100%;
+}
