@@ -1,0 +1,73 @@
+﻿@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+
+@inject ITenantManagerService TenantManagerService
+
+<MudPaper>
+    <MudSelect @bind-Value="Address.AddressType" Label="Post Type?" HelperText="Notification, Video, Social Media" OpenIcon="@Icons.Material.Filled.QuestionMark" AdornmentColor="Color.Secondary">
+        @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
+        {
+            <MudSelectItem Value="@item">@item</MudSelectItem>
+        }
+    </MudSelect>
+    <MudDatePicker Label="Date of Event" @bind-Date="Address.Location" />
+    <MudTimePicker Label="Time of Event" AmPm="true" TimeChanged="(time) => OnTimeChange(time)" Time="Address?.Location?.TimeOfDay" />
+    <MudTextField @bind-Value="Address.Title" Label="Title" Variant="Variant.Text"></MudTextField>
+    <MudTextField @bind-Value="Address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
+    <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
+    <MudCheckBox @bind-Value="Address.DelayRelease" Label="Delay Release"></MudCheckBox>
+    <MudButton Color="Color.Primary" OnClick="SaveAddress">Save</MudButton>
+    <MudButton Color="Color.Tertiary" OnClick="CancelAddress">Cancel</MudButton>
+</MudPaper>
+
+@code {
+
+    private bool addressSet = false;
+
+    [Parameter]
+    public Address Address { get; set; } = new Address();
+
+    [Parameter]
+    public IRoadToThere Road { get; set; } = new RoadToThere();
+
+    [Parameter]
+    public EventCallback AddressChanged { get; set; }
+
+    protected override Task OnParametersSetAsync()
+    {
+        return base.OnParametersSetAsync();
+    }
+
+    private void SaveAddress()
+    {
+        List<Address> addresses = new List<Address>(Road.Addresses);
+        addresses.Add(Address);
+        Road.Addresses = addresses.ToArray();
+
+        // Save to file.
+        TenantManagerService.SaveRoad(Road);
+
+
+        // Reset the address.
+        Address = new Address();
+        this.AddressChanged.InvokeAsync(this);
+        this.StateHasChanged();
+    }
+
+    private void CancelAddress()
+    {
+        Address = new Address();
+        this.AddressChanged.InvokeAsync(this);
+        this.StateHasChanged();
+    }
+
+    private void OnTimeChange(TimeSpan? time)
+    {
+        if (time == null || Address.Location == null)
+        {
+            return;
+        }
+
+        Address.Location = Address.Location.Value.Date.Add(time.Value);
+    }
+}

@@ -4,7 +4,7 @@
 @using Theatre_TimeLine.Models
 @using Theatre_TimeLine.Components
 
-@page "/RoadToThere/{TenantId?}"
+@page "/RoadToThere/{TenantId?}/{RoadId?}"
 
 @inject ITenantManagerService TenantManagerService
 @inject NavigationManager NavigationManager
@@ -15,11 +15,16 @@
     return;
 }
 
-<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true">
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" @ref="mudTabs" ActivePanelIndexChanged="(index) => OnTabChangedAsync(index)">
     <div style="margin: auto;width: 75%;padding: 10px;">
         @foreach (IRoadToThere road in tenant.Roads)
         {
-            <MudTabPanel Text="@road?.Title">
+            <MudTabPanel Text="@road?.Title" ID="road?.RoadId">
+
+                <MudMenu Icon="@Icons.Material.Filled.MoreVert" style="fixed; float:right" AriaLabel="Road Menu Options">
+                    <MudMenuItem Label="Create Address" OnClick="() =>  CreateAddress(road)" />
+                </MudMenu>
+
                 <MudText>@road?.Description</MudText>
                 <img src="@road?.Banner" alt="@road?.Description" style="margin: auto;width: 75%;padding: 10px;" />
                 <MudTimeline>
@@ -33,12 +38,25 @@
     </div>
 </MudTabs>
 
+<MudPopover Open="@_open" Class="pa-4" Fixed="true" AnchorOrigin="Origin.CenterCenter" TransformOrigin="Origin.CenterCenter">
+    <AddressEditor @ref="addressEditor" AddressChanged="OnAddressChange" Road="road" />
+</MudPopover>
+
 @code {
 
     private ITenantContainer? tenant;
+    private bool _open = false;
+    private AddressEditor addressEditor = new();
 
     [Parameter]
     public string? TenantId { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? RoadId { get; set; } = string.Empty;
+
+    private MudTabs? mudTabs;
+
+    private IRoadToThere? road;
 
     protected override async Task OnInitializedAsync()
     {
@@ -57,5 +75,71 @@
 
         tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId));
         await base.OnInitializedAsync();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        base.OnAfterRender(firstRender);
+
+        if (mudTabs == null || string.IsNullOrEmpty(this.RoadId))
+        {
+            return;
+        }
+
+        if (!Guid.TryParse(this.RoadId, out Guid roadId))
+        {
+            return;
+        }
+
+        foreach (var tab in mudTabs.Panels)
+        {
+            // If id is null or not a guid continue.
+            if (tab.ID == null || !(tab.ID is Guid))
+            {
+                continue;
+            }
+
+            if ((Guid)tab.ID == roadId)
+            {
+                mudTabs.ActivatePanel(tab);
+                break;
+            }
+        }
+    }
+
+    private async Task OnAddressChange(object sender)
+    {
+        this.road = null;
+        this._open = false;
+        this.StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private async Task OnTabChangedAsync(int tabIndex)
+    {
+        if (mudTabs == null)
+        {
+            return;
+        }
+
+        if (!(mudTabs.Panels[tabIndex].ID is Guid roadId))
+        {
+            return;
+        }
+
+        NavigationManager.NavigateTo($"RoadToThere/{TenantId}/{roadId}");
+        await Task.CompletedTask;
+    }
+
+    private async Task CreateAddress(IRoadToThere? road)
+    {
+        if (road == null)
+        {
+            return;
+        }
+
+        this.road = road;
+        this._open = true;
+        await Task.CompletedTask;
     }
 }
