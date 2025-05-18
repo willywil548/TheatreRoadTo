@@ -12,22 +12,22 @@
     </MudTimelineItem>
 }
 
-    @foreach (var item in this.GetAddresses())
-    {
-        <CascadingValue Value="item">
-            <CascadingValue Value="OnEditAddress">
-                @switch (item.AddressType)
-                {
-                    case AddressType.VideoMedia:
-                                <VideoMediaAddress />
-                        break;
-                    default:
-                                <NotificationAddress />
-                        break;
-                }
-            </CascadingValue>
+@foreach (var item in this.GetAddresses())
+{
+    <CascadingValue Value="item">
+        <CascadingValue Value="OnEditAddress">
+            @switch (item.AddressType)
+            {
+                case AddressType.VideoMedia:
+                    <VideoMediaAddress />
+                    break;
+                default:
+                    <NotificationAddress />
+                    break;
+            }
         </CascadingValue>
-    }
+    </CascadingValue>
+}
 
 @code {
 
