@@ -2,6 +2,7 @@
 @using Theatre_TimeLine.Models
 @using Theatre_TimeLine.Contracts
 @using System.Linq
+
 @inherits LayoutComponentBase
 
 @if (ShouldRenderTimeSeparator())
@@ -16,11 +17,19 @@
     switch (item.AddressType)
     {
         case AddressType.VideoMedia:
-            <VideoMediaAddress Address="item" />
+            <CascadingValue Value="item">
+                <CascadingValue Value="OnEditAddress">
+                    <VideoMediaAddress />
+                </CascadingValue>
+            </CascadingValue>
             break;
         default:
-            <NotificationAddress Address="item" />
-        break;
+            <CascadingValue Value="item">
+                <CascadingValue Value="OnEditAddress">
+                    <NotificationAddress />
+                </CascadingValue>
+            </CascadingValue>
+            break;
     }
 }
 
@@ -39,6 +48,9 @@
 
     [Parameter]
     public string? Class { get; set; }
+
+    [Parameter]
+    public EventCallback<IAddress> OnEditAddress { get; set; }
 
     protected override Task OnParametersSetAsync()
     {
@@ -140,6 +152,8 @@
         }
 
         return Road.Addresses
+            .Where(x => x.Location != null)
+            .Where(x => !x.DelayRelease || (x.DelayRelease && x.Location < DateTime.Now))
             .Where(x => x.Location <= blockRange.AddHours(24).AddSeconds(-1) && x.Location >= blockRange)
             .OrderByDescending(x => x.Location);
     }

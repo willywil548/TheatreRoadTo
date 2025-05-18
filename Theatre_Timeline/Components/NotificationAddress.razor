@@ -1,17 +1,27 @@
 ﻿@namespace Theatre_TimeLine.Components
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
+
 @inherits AddressBase
 
 <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
     <ItemOpposite>
-        <MudText Color="Color.Info">@Address.Location</MudText>
+        <MudText Color="Color.Info">@Address?.Location</MudText>
     </ItemOpposite>
     <ItemContent>
         <MudCard Outlined="true" Class="p-2">
-            <MudText Color="Color.Info" Class="align-content-center">@Address.Title</MudText>
-            <MudText Class="align-content-center">@Address.Description</MudText>
-            <MudText Class="align-content-center">@Address.Content</MudText>
+            <MudCardContent>
+                <MudText Color="Color.Info" Class="align-content-center">@Address?.Title</MudText>
+                <MudText Class="align-content-center">@Address?.Description</MudText>
+                <MudText Class="align-content-center">@Address?.Content</MudText>
+                <MudText Color="Color.Info" Class="align-content-center">@Address?.Location</MudText>
+            </MudCardContent>
+
+            <CascadingValue Value="Address" IsFixed="true">
+                <CascadingValue Value="OnEditAddress" IsFixed="true">
+                    <AddressEditMenuItem />
+                </CascadingValue>
+            </CascadingValue>
         </MudCard>
     </ItemContent>
 </MudTimelineItem>

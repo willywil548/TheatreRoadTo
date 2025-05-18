@@ -2,7 +2,7 @@
 
 namespace Theatre_TimeLine.Models
 {
-    public class Address : IAddress
+    public class Address : IAddress, IEquatable<Address>
     {
         /// <summary>
         /// Gets or sets the location.
@@ -38,5 +38,20 @@ namespace Theatre_TimeLine.Models
         /// Gets or sets the delay release.
         /// </summary>
         public bool DelayRelease { get; set; } = false;
+
+        public override string ToString()
+        {
+            return $"{this.Title} - {this.Description} - {this.AddressType} - {this.Location} - {this.Content}";
+        }
+
+        public bool Equals(Address? other)
+        {
+            if (ReferenceEquals(other, null))
+            {
+                return false;
+            }
+
+            return string.Equals(this?.ToString(), other?.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
     }
 }

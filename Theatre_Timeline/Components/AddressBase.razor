@@ -1,15 +1,24 @@
 ﻿@namespace Theatre_TimeLine.Components
 @using Theatre_TimeLine.Contracts;
 @using Theatre_TimeLine.Models
+
 @inherits LayoutComponentBase
 
 @code {
 
-    [Parameter]
-    public IAddress Address { get; set; } = new Address();
+    [CascadingParameter]
+    public IAddress? Address { get; set; } = new Address();
 
-    private protected Color GetColor(IAddress address)
+    [CascadingParameter]
+    public EventCallback<IAddress> OnEditAddress { get; set; }
+
+    private protected Color GetColor(IAddress? address)
     {
+        if (address == null)
+        {
+            return Color.Tertiary;
+        }
+
         switch (address.AddressType)
         {
             case AddressType.VideoMedia:

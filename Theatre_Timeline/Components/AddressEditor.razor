@@ -17,21 +17,33 @@
     <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
     <MudCheckBox @bind-Value="Address.DelayRelease" Label="Delay Release"></MudCheckBox>
     <MudButton Color="Color.Primary" OnClick="SaveAddress">Save</MudButton>
+    <MudButton Color="Color.Secondary" OnClick="DeleteAddress">Delete</MudButton>
     <MudButton Color="Color.Tertiary" OnClick="CancelAddress">Cancel</MudButton>
 </MudPaper>
 
 @code {
 
-    private bool addressSet = false;
-
     [Parameter]
-    public Address Address { get; set; } = new Address();
+    public IAddress Address { get; set; } = new Address();
 
     [Parameter]
     public IRoadToThere Road { get; set; } = new RoadToThere();
 
     [Parameter]
     public EventCallback AddressChanged { get; set; }
+
+    [Parameter]
+    public EventCallback AddressDeleted { get; set; }
+
+    public void SetAddress(IAddress address)
+    {
+        if (address is Address addr)
+        {
+            Address = addr;
+        }
+
+        // this.StateHasChanged();
+    }
 
     protected override Task OnParametersSetAsync()
     {
@@ -40,9 +52,9 @@
 
     private void SaveAddress()
     {
-        List<Address> addresses = new List<Address>(Road.Addresses);
+        List<IAddress> addresses = new List<IAddress>(Road.Addresses);
         addresses.Add(Address);
-        Road.Addresses = addresses.ToArray();
+        Road.Addresses = addresses.Cast<Address>().ToArray();
 
         // Save to file.
         TenantManagerService.SaveRoad(Road);
@@ -51,14 +63,26 @@
         // Reset the address.
         Address = new Address();
         this.AddressChanged.InvokeAsync(this);
-        this.StateHasChanged();
+    }
+
+    private void DeleteAddress()
+    {
+        List<IAddress> addresses = new List<IAddress>(Road.Addresses.Where(a => !a.Equals(Address)));
+        Road.Addresses = addresses.Cast<Address>().ToArray();
+
+        // Save to file.
+        TenantManagerService.SaveRoad(Road);
+
+
+        // Reset the address.
+        Address = new Address();
+        this.AddressChanged.InvokeAsync(this);
     }
 
     private void CancelAddress()
     {
         Address = new Address();
         this.AddressChanged.InvokeAsync(this);
-        this.StateHasChanged();
     }
 
     private void OnTimeChange(TimeSpan? time)

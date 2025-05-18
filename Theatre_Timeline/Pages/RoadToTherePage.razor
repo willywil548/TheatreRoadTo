@@ -30,7 +30,7 @@
                 <MudTimeline>
                     @for (int i = 0; i <= road?.Duration; i++)
                     {
-                        <Block Road="road" BlockIndex="i" Class="align-content-center" />
+                        <Block Road="road" BlockIndex="i" Class="align-content-center" OnEditAddress="(address) => OnEditAddress(road, address)" />
                     }
                 </MudTimeline>
             </MudTabPanel>
@@ -38,14 +38,14 @@
     </div>
 </MudTabs>
 
-<MudPopover Open="@_open" Class="pa-4" Fixed="true" AnchorOrigin="Origin.CenterCenter" TransformOrigin="Origin.CenterCenter">
-    <AddressEditor @ref="addressEditor" AddressChanged="OnAddressChange" Road="road" />
+<MudPopover Open="@open" Class="pa-4" Fixed="false" AnchorOrigin="Origin.CenterCenter" >
+    <AddressEditor @ref="addressEditor" AddressChanged="OnAddressChange" Road="road" Address="address" />
 </MudPopover>
 
 @code {
 
     private ITenantContainer? tenant;
-    private bool _open = false;
+    private bool open = false;
     private AddressEditor addressEditor = new();
 
     [Parameter]
@@ -57,6 +57,8 @@
     private MudTabs? mudTabs;
 
     private IRoadToThere? road;
+
+    private IAddress? address = new Address();
 
     protected override async Task OnInitializedAsync()
     {
@@ -110,7 +112,8 @@
     private async Task OnAddressChange(object sender)
     {
         this.road = null;
-        this._open = false;
+        this.open = false;
+        this.address = new Address();
         this.StateHasChanged();
         await Task.CompletedTask;
     }
@@ -139,7 +142,27 @@
         }
 
         this.road = road;
-        this._open = true;
+        this.open = true;
+        await Task.CompletedTask;
+    }
+
+    private async Task OnEditAddress(IRoadToThere? road, IAddress? address)
+    {
+        if (road == null)
+        {
+            return;
+        }
+
+        if (address == null)
+        {
+            return;
+        }
+
+        this.address = address;
+
+        this.road = road;
+        this.open = true;
+        this.StateHasChanged();
         await Task.CompletedTask;
     }
 }

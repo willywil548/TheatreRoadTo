@@ -113,7 +113,7 @@ namespace Theatre_TimeLine.Models
 
         public override string ToString()
         {
-            return $"{Title} - {this.StartTime?.ToString("dd-MMM-yy")}==>{this.EndTime?.ToString("dd-MMM-yy")}";
+            return $"{Title} - {this.StartTime?.ToString("dd-MMM-yy")} --> {this.EndTime?.ToString("dd-MMM-yy")}";
         }
     }
 }
