@@ -4,7 +4,7 @@
 @inject ITenantManagerService TenantManagerService
 
 <MudPaper>
-    <MudSelect @bind-Value="Address.AddressType" Label="Post Type?" HelperText="Notification, Video, Social Media" OpenIcon="@Icons.Material.Filled.QuestionMark" AdornmentColor="Color.Secondary">
+    <MudSelect @bind-Value="addressType" Label="Post Type?" HelperText="Notification, Video, Social Media" >
         @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
         {
             <MudSelectItem Value="@item">@item</MudSelectItem>
@@ -14,7 +14,26 @@
     <MudTimePicker Label="Time of Event" AmPm="true" TimeChanged="(time) => OnTimeChange(time)" Time="Address?.Location?.TimeOfDay" />
     <MudTextField @bind-Value="Address.Title" Label="Title" Variant="Variant.Text"></MudTextField>
     <MudTextField @bind-Value="Address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
-    <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
+    <div style="display:@showPollThings">
+        <MudSelect @bind-Value="@pollType" Label="Poll Type:" HelperText="Muliple Choice, Yes or No">
+            @foreach (PollType pollingType in Enum.GetValues(typeof(PollType)))
+            {
+                <MudSelectItem Value="@pollingType">@pollingType</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField T="string" Label="Question" Variant="Variant.Text" TextChanged="AddQuestionText" />
+        <div style="display:@showOptions">
+            @foreach (string option in poll.Options)
+            {
+                <MudText>@option</MudText>
+            }
+            <MudTextField Label="New Option:" Variant="Variant.Text" @bind-Value="pollOptionText" />
+            <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddPollOption" IconSize="Size.Small" />
+        </div>
+    </div>
+    <div style="display:@showNonPollThings">
+        <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
+    </div>
     <MudCheckBox @bind-Value="Address.DelayRelease" Label="Delay Release"></MudCheckBox>
     <MudButton Color="Color.Primary" OnClick="SaveAddress">Save</MudButton>
     <MudButton Color="Color.Secondary" OnClick="DeleteAddress">Delete</MudButton>
@@ -22,6 +41,8 @@
 </MudPaper>
 
 @code {
+
+    private event EventHandler<AddressType> AddressTypeChanged;
 
     [Parameter]
     public IAddress Address { get; set; } = new Address();
@@ -35,14 +56,82 @@
     [Parameter]
     public EventCallback AddressDeleted { get; set; }
 
+    private AddressType addressType
+    {
+        get
+        {
+            return this.Address.AddressType;
+        }
+        set
+        {
+            if (this.Address.AddressType == value)
+            {
+                return;
+            }
+
+            this.Address.AddressType = value;
+            this.AddressTypeChanged?.Invoke(this, value);
+        }
+    }
+
+    #region Poll Fields and Properties
+
+    private PollAddress? PollAddress => Address as PollAddress;
+    private Poll poll => PollAddress?.GetPoll() ?? new Poll();
+    private string? pollQuestion;
+    private bool pollShowing => Address is PollAddress;
+    private string showPollThings => pollShowing ? "" : "none";
+    private string showNonPollThings => pollShowing ? "none" : "";
+    private string showOptions => poll.PollType == PollType.MultipleChoice ? "" : "none";
+
+    private PollType pollType
+    {
+        get
+        {
+            return this.poll.PollType;
+        }
+        set
+        {
+            this.SetPollType(value)
+                .ConfigureAwait(false)
+                .GetAwaiter();
+        }
+    }
+
+    private string pollQuestionText
+    {
+        get
+        {
+            return this.poll.Question;
+        }
+        set
+        {
+            this.AddQuestionText(value)
+                .ConfigureAwait(false)
+                .GetAwaiter();
+        }
+    }
+
+    private string pollOptionText = string.Empty;
+
+    #endregion
+
     public void SetAddress(IAddress address)
     {
         if (address is Address addr)
         {
             Address = addr;
         }
+    }
 
-        // this.StateHasChanged();
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            this.AddressTypeChanged += OnAddressTypeChanged;
+        }
+
+        return base.OnAfterRenderAsync(firstRender);
     }
 
     protected override Task OnParametersSetAsync()
@@ -50,9 +139,72 @@
         return base.OnParametersSetAsync();
     }
 
+    private async Task SetPollType(PollType pollType)
+    {
+        if (PollAddress == null)
+        {
+            return;
+        }
+
+        Poll poll = this.poll;
+        poll.PollType = pollType;
+        this.PollAddress.SetPollType(poll);
+        this.StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private async Task AddQuestionText(string? question)
+    {
+        if (PollAddress == null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(question))
+        {
+            return;
+        }
+
+        Poll poll = this.poll;
+        poll.Question = question;
+        this.PollAddress.SetPollQuestion(poll);
+        this.StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private async Task AddPollOption()
+    {
+        if (PollAddress == null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(this.pollOptionText))
+        {
+            return;
+        }
+
+        Poll poll = this.poll;
+
+        poll.Options.Add(this.pollOptionText);
+        this.PollAddress.SetPollOptions(poll);
+        this.pollOptionText = string.Empty;
+        this.StateHasChanged();
+
+        await Task.CompletedTask;
+    }
+
     private void SaveAddress()
     {
         List<IAddress> addresses = new List<IAddress>(Road.Addresses);
+
+        // Set the poll content if it is a PollAddress.
+        if (Address is PollAddress pollAddress)
+        {
+            pollAddress.SetPoll(poll);
+        }
+
+        // Save address.
         addresses.Add(Address);
         Road.Addresses = addresses.Cast<Address>().ToArray();
 
@@ -93,5 +245,25 @@
         }
 
         Address.Location = Address.Location.Value.Date.Add(time.Value);
+    }
+
+    private void OnAddressTypeChanged(object sender, AddressType addressType)
+    {
+        if (addressType == AddressType.Polling)
+        {
+            if (!(Address is PollAddress))
+            {
+                Address = new PollAddress();
+            }
+
+            return;
+        }
+
+        if (Address is PollAddress)
+        {
+            Address = new Address();
+        }
+
+        this.StateHasChanged();
     }
 }

@@ -5,15 +5,14 @@
 
 <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
     <ItemOpposite>
-        <MudText Color="Color.Info">@Address?.Location</MudText>
+        <MudText Color="GetColor(Address)">@Address?.Location</MudText>
     </ItemOpposite>
     <ItemContent>
         <MudCard Outlined="true" Class="p-2">
             <MudCardContent>
-                <MudText Color="Color.Info" Class="align-content-center">@Address?.Title</MudText>
+                <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
                 <br />
                 <iframe width="560" height="315" src="@Address?.Content" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                <MudText Class="align-content-center">@Address?.Description</MudText>
             </MudCardContent>
 
             <CascadingValue Value="Address" IsFixed="true">

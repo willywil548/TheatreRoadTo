@@ -1,4 +1,5 @@
 ﻿@namespace Theatre_TimeLine.Components
+
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
 
@@ -13,7 +14,12 @@
             <MudCardContent>
                 <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
                 <MudText Class="align-content-center">@Address?.Description</MudText>
-                <MudText Class="align-content-center">@Address?.Content</MudText>
+                <MudRadioGroup @bind-Value="SelectedOption">
+                    @foreach (string option in poll.Options)
+                    {
+                        <MudRadio Value="@option" Color="Color.Secondary">@option</MudRadio>
+                    }
+                </MudRadioGroup>
             </MudCardContent>
 
             <CascadingValue Value="Address" IsFixed="true">
@@ -26,5 +32,7 @@
 </MudTimelineItem>
 
 @code {
+    private Poll poll => (this.Address as PollAddress)?.GetPoll() ?? new();
 
+    private string SelectedOption { get; set; } = string.Empty;
 }
