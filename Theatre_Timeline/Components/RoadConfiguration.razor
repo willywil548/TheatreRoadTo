@@ -49,7 +49,7 @@
             <MudButton Class="button" @onclick="GetCroppedCanvasDataURLAsync">
                 Crop Image
             </MudButton>
-            @if (croppedCanvasDataURL != null)
+            @if (!string.IsNullOrEmpty(croppedCanvasDataURL))
             {
                 <br />
                 <img class="big-image" src="@croppedCanvasDataURL" />

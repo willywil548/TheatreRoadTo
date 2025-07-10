@@ -4,16 +4,24 @@
 @inject ITenantManagerService TenantManagerService
 
 <MudPaper>
+    <!-- Poll Type -->
     <MudSelect @bind-Value="addressType" Label="Post Type?" HelperText="Notification, Video, Social Media" >
         @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
         {
             <MudSelectItem Value="@item">@item</MudSelectItem>
         }
     </MudSelect>
+    <!-- Location -->
     <MudDatePicker Label="Date of Event" @bind-Date="Address.Location" />
     <MudTimePicker Label="Time of Event" AmPm="true" TimeChanged="(time) => OnTimeChange(time)" Time="Address?.Location?.TimeOfDay" />
+
+    <!-- Title of Location  -->
     <MudTextField @bind-Value="Address.Title" Label="Title" Variant="Variant.Text"></MudTextField>
+
+    <!-- Description of Location  -->
     <MudTextField @bind-Value="Address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
+
+    <!-- Poll -->
     <div style="display:@showPollThings">
         <MudSelect @bind-Value="@pollType" Label="Poll Type:" HelperText="Muliple Choice, Yes or No">
             @foreach (PollType pollingType in Enum.GetValues(typeof(PollType)))
@@ -79,7 +87,7 @@
     private PollAddress? PollAddress => Address as PollAddress;
     private Poll poll => PollAddress?.GetPoll() ?? new Poll();
     private string? pollQuestion;
-    private bool pollShowing => Address is PollAddress;
+    private bool pollShowing => IsPoll();
     private string showPollThings => pollShowing ? "" : "none";
     private string showNonPollThings => pollShowing ? "none" : "";
     private string showOptions => poll.PollType == PollType.MultipleChoice ? "" : "none";
@@ -192,6 +200,11 @@
         this.StateHasChanged();
 
         await Task.CompletedTask;
+    }
+
+    private bool IsPoll()
+    {
+        return Address is PollAddress;
     }
 
     private void SaveAddress()
