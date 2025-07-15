@@ -217,6 +217,12 @@
             pollAddress.SetPoll(poll);
         }
 
+        if (addresses.Any(a =>  a.Equals(Address)))
+        {
+            // If the address already exists, remove it first.
+            addresses.Remove(Address);
+        }
+
         // Save address.
         addresses.Add(Address);
         Road.Addresses = addresses.Cast<Address>().ToArray();
