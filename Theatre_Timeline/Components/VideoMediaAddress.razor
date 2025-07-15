@@ -1,4 +1,5 @@
 ﻿@namespace Theatre_TimeLine.Components
+@using System.Text.RegularExpressions
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
 @inherits AddressBase
@@ -12,7 +13,7 @@
             <MudCardContent>
                 <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
                 <br />
-                <iframe width="560" height="315" src="@Address?.Content" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                <iframe width="560" height="315" src="@YouTubeSrc" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
             </MudCardContent>
 
             <CascadingValue Value="Address" IsFixed="true">
@@ -23,5 +24,19 @@
 </MudTimelineItem>
 
 @code {
+    private string YouTubeSrc => ExtractYouTubeSrc(Address?.Content);
 
+    private string ExtractYouTubeSrc(string? embedCode)
+    {
+        if (string.IsNullOrWhiteSpace(embedCode))
+        {
+            return string.Empty;
+        }
+
+        var match = Regex.Match(
+            embedCode,
+            "src\\s*=\\s*\"([^\"]+)\"",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value : string.Empty;
+    }
 }

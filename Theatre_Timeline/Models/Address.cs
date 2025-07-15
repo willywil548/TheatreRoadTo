@@ -2,7 +2,7 @@
 
 namespace Theatre_TimeLine.Models
 {
-    public class Address : IAddress, IEquatable<Address>
+    public class Address : IAddress, IEquatable<IAddress>
     {
         /// <summary>
         /// Gets or sets the location.
@@ -44,12 +44,26 @@ namespace Theatre_TimeLine.Models
             return this.Location.HasValue ? this.Location.Value.ToString("MMM dd @ HH:mm") : "No Date";
         }
 
+        /// <summary>
+        /// Returns a string representation of the object, including its title, description, address type, location, and
+        /// content.
+        /// </summary>
+        /// <returns>A string that concatenates the title, description, address type, location, and content of the object,
+        /// separated by hyphens.</returns>
         public override string ToString()
         {
             return $"{this.Title} - {this.Description} - {this.AddressType} - {this.Location} - {this.Content}";
         }
 
-        public bool Equals(Address? other)
+        /// <summary>
+        /// Determines whether the specified <see cref="IAddress"/> is equal to the current instance.
+        /// </summary>
+        /// <remarks>The comparison is case-insensitive and based on the string representation of the
+        /// addresses.</remarks>
+        /// <param name="other">The <see cref="IAddress"/> to compare with the current instance.</param>
+        /// <returns><see langword="true"/> if the specified <see cref="IAddress"/> is equal to the current instance; otherwise,
+        /// <see langword="false"/>.</returns>
+        public bool Equals(IAddress? other)
         {
             if (ReferenceEquals(other, null))
             {

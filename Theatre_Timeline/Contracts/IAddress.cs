@@ -56,5 +56,13 @@
         /// </summary>
         /// <returns>A string representing the display location.</returns>
         string GetDisplayLocation();
+
+        /// <summary>
+        /// Determines whether the current address is equal to another address.
+        /// </summary>
+        /// <param name="other">The address to compare with the current address. Can be <see langword="null"/>.</param>
+        /// <returns><see langword="true"/> if the specified address is equal to the current address; otherwise, <see
+        /// langword="false"/>.</returns>
+        bool Equals(IAddress? other);
     }
 }
