@@ -39,6 +39,11 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public bool DelayRelease { get; set; } = false;
 
+        public string GetDisplayLocation()
+        {
+            return this.Location.HasValue ? this.Location.Value.ToString("MMM dd @ HH:mm") : "No Date";
+        }
+
         public override string ToString()
         {
             return $"{this.Title} - {this.Description} - {this.AddressType} - {this.Location} - {this.Content}";

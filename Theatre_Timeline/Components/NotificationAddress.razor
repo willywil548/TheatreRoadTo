@@ -6,14 +6,14 @@
 
 <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
     <ItemOpposite>
-        <MudText Color="GetColor(Address)">@Address?.Location</MudText>
+        <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
     </ItemOpposite>
     <ItemContent>
         <MudCard Outlined="true" Class="p-2">
             <MudCardContent>
                 <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
-                <MudText Class="align-content-center">@Address?.Description</MudText>
-                <MudText Class="align-content-center">@Address?.Content</MudText>
+                <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Description))</MudText>
+                <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Content))</MudText>
             </MudCardContent>
 
             <CascadingValue Value="Address" IsFixed="true">

@@ -50,5 +50,11 @@
         /// Gets or sets a value indicating whether to delay the release of the address.
         /// </summary>
         bool DelayRelease { get; set; }
+
+        /// <summary>
+        /// Gets the display location as a string.
+        /// </summary>
+        /// <returns>A string representing the display location.</returns>
+        string GetDisplayLocation();
     }
 }
