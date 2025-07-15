@@ -46,7 +46,7 @@
                 <CropperComponent Class="big-img" Src="@bannerFilePath" @ref="cropperComponent" Options="cropperOptions" />
             </div>
 
-            <MudButton Class="button" @onclick="GetCroppedCanvasDataURLAsync">
+            <MudButton Class="button" @onclick="GetCroppedCanvasDataURLAsync" Color="Color.Tertiary">
                 Crop Image
             </MudButton>
             @if (!string.IsNullOrEmpty(croppedCanvasDataURL))
@@ -54,7 +54,7 @@
                 <br />
                 <img class="big-image" src="@croppedCanvasDataURL" />
                 <br />
-                <MudButton Class="button" @onclick="SaveBanner">
+                <MudButton Class="button" @onclick="SaveBanner" Color="Color.Tertiary">
                     Save Image
                 </MudButton>
             }
@@ -64,7 +64,10 @@
             <br />
             <img class="big-image" src="@Road.Banner" />
             <br />
-            <MudFileUpload T="IBrowserFile" FilesChanged="UploadFiles">
+            <MudFileUpload T="IBrowserFile"
+                FilesChanged="UploadFiles"
+                Accept="@this.bannerAllowFiletypes"
+                AppendMultipleFiles="false" MaximumFileCount="1" >
                 <ActivatorContent>
                     <MudButton Color="Color.Tertiary" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Image">Upload banner image</MudButton>
                 </ActivatorContent>
@@ -141,28 +144,6 @@
             }
         }
     }
-
-    [Parameter]
-    public IRoadToThere Road { get; set; } = new RoadToThere();
-
-    [Parameter]
-    public Action<IRoadToThere>? OnSaveRoad { get; set; }
-
-    [Parameter]
-    public Action<Guid>? OnRemoveRoad { get; set; }
-
-    private async Task GetCroppedCanvasDataURLAsync()
-    {
-        GetCroppedCanvasOptions getCroppedCanvasOptions = new GetCroppedCanvasOptions
-            {
-                MaxHeight = 4096,
-                MaxWidth = 4096,
-                ImageSmoothingQuality = ImageSmoothingQuality.High.ToEnumString()
-            };
-
-        croppedCanvasDataURL = await cropperComponent!.GetCroppedCanvasDataURLAsync(getCroppedCanvasOptions);
-    }
-
     private RoadScope roadScope
     {
         get => Road.RoadScope;
@@ -191,6 +172,48 @@
             Road.StartTime = value;
             ScopeChanged();
         }
+    }
+
+    private string webRootPath = string.Empty;
+    private long maxAllowedSize;
+    private string bannerAllowFiletypes = string.Empty;
+
+    protected override Task OnInitializedAsync()
+    {
+        string? webRootPath = Configuration["TenantManager:WebRootPath"];
+
+        if (string.IsNullOrEmpty(webRootPath))
+        {
+            webRootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
+        }
+
+        this.webRootPath = webRootPath;
+
+        // MB value for max file size
+        this.maxAllowedSize = Configuration.GetValue<long>("TenantManager:MaxFileSizeMB", 10) * 1024 * 1024; // Default to 10 MB
+        this.bannerAllowFiletypes = Configuration.GetValue<string>("TenantManager:BannerAllowFiletypes") ?? ".jpg,.png,.jpeg";
+        return base.OnInitializedAsync();
+    }
+
+    [Parameter]
+    public IRoadToThere Road { get; set; } = new RoadToThere();
+
+    [Parameter]
+    public Action<IRoadToThere>? OnSaveRoad { get; set; }
+
+    [Parameter]
+    public Action<Guid>? OnRemoveRoad { get; set; }
+
+    private async Task GetCroppedCanvasDataURLAsync()
+    {
+        GetCroppedCanvasOptions getCroppedCanvasOptions = new GetCroppedCanvasOptions
+            {
+                MaxHeight = 4096,
+                MaxWidth = 4096,
+                ImageSmoothingQuality = ImageSmoothingQuality.High.ToEnumString()
+            };
+
+        croppedCanvasDataURL = await cropperComponent!.GetCroppedCanvasDataURLAsync(getCroppedCanvasOptions);
     }
 
     private void ScopeChanged()
@@ -240,19 +263,29 @@
     private async Task UploadFiles(IBrowserFile file)
     {
         croppedCanvasDataURL = null;
-        string? webRootPath = Configuration["WebRootPath"];
 
-        if (string.IsNullOrEmpty(webRootPath))
+        // Check if extension is allowed
+        string fileExtension = Path.GetExtension(file.Name).ToLower();
+        if(!bannerAllowFiletypes.Split(',').Contains(fileExtension))
         {
-            webRootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
+            Snackbar.Add($"File type {fileExtension} is not allowed.", Severity.Error);
+            return;
         }
 
-        string tempFileName = Path.Combine(webRootPath, "temp", file.Name);
+        // Check file size
+        if (file.Size > this.maxAllowedSize)
+        {
+            Snackbar.Add($"File size exceeds the maximum allowed size of {this.maxAllowedSize / 1024 / 1024} MB.", Severity.Error);
+            return;
+        }
+
+        // Get a temporary file path
+        string tempFileName = Path.Combine(this.webRootPath, "temp", file.Name);
         FileInfo fi = new FileInfo(tempFileName);
         fi.Directory?.Create();
         Trace.WriteLine($"Uploading {file.Name} to {tempFileName}");
         using (var stream = new FileStream(tempFileName, FileMode.Create))
-        using (var fileStream = file.OpenReadStream())
+        using (var fileStream = file.OpenReadStream(maxAllowedSize: this.maxAllowedSize))
         {
             await fileStream.CopyToAsync(stream);
         }
