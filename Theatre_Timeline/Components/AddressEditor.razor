@@ -22,26 +22,33 @@
     <MudTextField @bind-Value="Address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
 
     <!-- Poll -->
-    <div style="display:@showPollThings">
-        <MudSelect @bind-Value="@pollType" Label="Poll Type:" HelperText="Muliple Choice, Yes or No">
-            @foreach (PollType pollingType in Enum.GetValues(typeof(PollType)))
-            {
-                <MudSelectItem Value="@pollingType">@pollingType</MudSelectItem>
-            }
-        </MudSelect>
-        <MudTextField T="string" Label="Question" Variant="Variant.Text" TextChanged="AddQuestionText" />
-        <div style="display:@showOptions">
-            @foreach (string option in poll.Options)
-            {
-                <MudText>@option</MudText>
-            }
-            <MudTextField Label="New Option:" Variant="Variant.Text" @bind-Value="pollOptionText" />
-            <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddPollOption" IconSize="Size.Small" />
+    @if (addressType == AddressType.Survey)
+    {
+        <div>
+            <MudSelect @bind-Value="@pollType" Label="Poll Type:" HelperText="Muliple Choice, Yes or No">
+                @foreach (PollType pollingType in Enum.GetValues(typeof(PollType)))
+                {
+                    <MudSelectItem Value="@pollingType">@pollingType</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField T="string" Label="Question" Variant="Variant.Text" TextChanged="AddQuestionText" />
+            <div style="display:@showOptions">
+                @foreach (string option in poll.Options)
+                {
+                    <MudText>@option</MudText>
+                }
+                <MudTextField Label="New Option:" Variant="Variant.Text" @bind-Value="pollOptionText" />
+                <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddPollOption" IconSize="Size.Small" />
+            </div>
         </div>
-    </div>
-    <div style="display:@showNonPollThings">
-        <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
-    </div>
+    }
+    else
+    {
+        <div>
+            <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
+        </div>
+    }
+
     <MudCheckBox @bind-Value="Address.DelayRelease" Label="Delay Release"></MudCheckBox>
     <MudButton Color="Color.Primary" OnClick="SaveAddress">Save</MudButton>
     <MudButton Color="Color.Secondary" OnClick="DeleteAddress">Delete</MudButton>
@@ -85,12 +92,10 @@
     #region Poll Fields and Properties
 
     private PollAddress? PollAddress => Address as PollAddress;
-    private Poll poll => PollAddress?.GetPoll() ?? new Poll();
+    private Poll poll = new Poll();
     private string? pollQuestion;
     private bool pollShowing => IsPoll();
-    private string showPollThings => pollShowing ? "" : "none";
-    private string showNonPollThings => pollShowing ? "none" : "";
-    private string showOptions => poll.PollType == PollType.MultipleChoice ? "" : "none";
+    private string showOptions => poll != null && poll.PollType == PollType.MultipleChoice ? "" : "none";
 
     private PollType pollType
     {
@@ -144,6 +149,13 @@
 
     protected override Task OnParametersSetAsync()
     {
+        // Ensure poll type is set from the existing poll when editing
+        if (this.Address.TryGetPoll(out Poll poll))
+        {
+            this.poll = poll;
+            this.pollType = this.poll.PollType; // This will trigger the setter and update the UI
+        }
+
         return base.OnParametersSetAsync();
     }
 
@@ -268,7 +280,7 @@
 
     private void OnAddressTypeChanged(object sender, AddressType addressType)
     {
-        if (addressType == AddressType.Polling)
+        if (addressType == AddressType.Survey)
         {
             if (!(Address is PollAddress))
             {

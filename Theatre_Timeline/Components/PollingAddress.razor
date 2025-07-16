@@ -2,6 +2,7 @@
 
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
+@inject IJSRuntime JS
 
 @inherits AddressBase
 
@@ -14,12 +15,34 @@
             <MudCardContent>
                 <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
                 <MudText Class="align-content-center">@Address?.Description</MudText>
-                <MudRadioGroup @bind-Value="SelectedOption">
-                    @foreach (string option in poll.Options)
-                    {
-                        <MudRadio Value="@option" Color="Color.Secondary">@option</MudRadio>
-                    }
-                </MudRadioGroup>
+                @if (!ShowResults)
+                {
+                    <MudText Typo="Typo.h6" Class="mb-2">@Poll.Question</MudText>
+                    <MudRadioGroup T="string" Value="SelectedOption" ValueChanged="OnSelectionChanged">
+                        @foreach (string option in Poll.Options)
+                        {
+                            <MudRadio Value="@option" Color="Color.Secondary">@option</MudRadio>
+                        }
+                    </MudRadioGroup>
+                }
+                else
+                {
+                    <div class="mt-2">
+                        <MudText Typo="Typo.subtitle2">Results:</MudText>
+                        @if (Poll.Responses.Count > 0)
+                        {
+                            @foreach (var option in Poll.Options)
+                            {
+                                <MudProgressLinear Color="Color.Primary" Value="@GetPercent(option)" Max="100" Style="height:10px" />
+                                <MudText>@option: @GetCount(option)</MudText>
+                            }
+                        }
+                        else
+                        {
+                            <MudText>No responses yet.</MudText>
+                        }
+                    </div>
+                }
             </MudCardContent>
 
             <CascadingValue Value="Address" IsFixed="true">
@@ -32,7 +55,71 @@
 </MudTimelineItem>
 
 @code {
-    private Poll poll => (this.Address as PollAddress)?.GetPoll() ?? new();
+    [CascadingParameter] public IRoadToThere? Road { get; set; }
+    [Inject] ITenantManagerService TenantManagerService { get; set; } = default!;
+
+    // Store poll in a field so it persists across renders
+    private Poll? poll;
+    private Poll Poll => poll ??= GetPollWithOptions();
 
     private string SelectedOption { get; set; } = string.Empty;
+    private bool ShowResults { get; set; } = false;
+    private bool _loaded = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_loaded)
+        {
+            await LoadUserSelectionAsync();
+            _loaded = true;
+            StateHasChanged();
+        }
+    }
+
+    private Poll GetPollWithOptions()
+    {
+        var p = this.Address.IsPollWithContent() ? this.Address.GetPoll() : new();
+        if (p.PollType == PollType.YesNo)
+        {
+            if (p.Options == null || p.Options.Count != 2 || !p.Options.Contains("Yes") || !p.Options.Contains("No"))
+            {
+                p.Options = new List<string> { "Yes", "No" };
+            }
+        }
+        return p;
+    }
+
+    private async Task LoadUserSelectionAsync()
+    {
+        var pollKey = $"poll_{Poll.PollId}";
+        SelectedOption = await JS.InvokeAsync<string>("localStorage.getItem", pollKey) ?? string.Empty;
+        ShowResults = !string.IsNullOrEmpty(SelectedOption);
+    }
+
+    private async Task OnSelectionChanged(string value)
+    {
+        // Find the actual PollAddress in the Road
+        Address? address = Road?.Addresses.FirstOrDefault(a => a.Equals(Address));
+        if (address != null && address.AddressType == AddressType.Survey)
+        {
+            this.Poll.Responses.Add(value);
+            address.SetPoll(this.Poll);
+
+            // Save the update
+            TenantManagerService.SaveRoad(Road);
+            SelectedOption = value;
+            var pollKey = $"poll_{Poll.PollId}";
+            await JS.InvokeVoidAsync("localStorage.setItem", pollKey, value);
+            ShowResults = true;
+        }
+
+        StateHasChanged();
+    }
+
+    private int GetCount(string option) => Poll.Responses.Count(r => r == option);
+    private double GetPercent(string option)
+    {
+        var total = Poll.Options.Sum(o => GetCount(o));
+        return total == 0 ? 0 : (double)GetCount(option) / total * 100;
+    }
 }

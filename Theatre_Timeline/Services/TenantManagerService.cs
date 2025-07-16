@@ -11,7 +11,7 @@ namespace Theatre_TimeLine.Services
     internal sealed class TenantManagerService : ITenantManagerService
     {
         public const string DemoGuid = "00000000-0000-0000-0000-3eca75185852";
-
+        private static readonly SemaphoreSlim writeManager = new(1, 1);
         private const string configurationKey = "TenantManager:DataPath";
         private const string tenantConfigurationFile = "TenantConfiguration.json";
         private readonly string dataPath;
@@ -70,8 +70,13 @@ namespace Theatre_TimeLine.Services
             }
         }
 
-        public void SaveRoad(IRoadToThere roadToThere)
+        public void SaveRoad(IRoadToThere? roadToThere)
         {
+            if (roadToThere == null)
+            {
+                return;
+            }
+
             this.ActionRoad(roadToThere.TenantId, tenant => tenant.SaveRoad(roadToThere));
         }
 
@@ -133,13 +138,21 @@ namespace Theatre_TimeLine.Services
 
         private void ActionRoad(Guid tenantId, Action<ITenantContainer> action)
         {
-            ITenantContainer? tenant = this.GetTenant(tenantId);
-            if (tenant == null)
+            writeManager.Wait();
+            try
             {
-                return;
-            }
+                ITenantContainer? tenant = this.GetTenant(tenantId);
+                if (tenant == null)
+                {
+                    return;
+                }
 
-            action?.Invoke(tenant);
+                action?.Invoke(tenant);
+            }
+            finally
+            {
+                writeManager.Release();
+            }
         }
 
         private void CreateDemoPage()

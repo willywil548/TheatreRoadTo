@@ -12,25 +12,28 @@
     </MudTimelineItem>
 }
 
-@foreach (var item in this.GetAddresses())
-{
-    <CascadingValue Value="item">
-        <CascadingValue Value="OnEditAddress">
-            @switch (item.AddressType)
-            {
-                case AddressType.VideoMedia:
-                    <VideoMediaAddress />
-                    break;
-                case AddressType.Polling:
-                    <PollingAddress />
-                    break;
-                default:
-                    <NotificationAddress />
-                    break;
-            }
+
+<CascadingValue Value="Road">
+    @foreach (var item in this.GetAddresses())
+    {
+        <CascadingValue Value="item">
+            <CascadingValue Value="OnEditAddress">
+                @switch (item.AddressType)
+                {
+                    case AddressType.Video:
+                        <VideoMediaAddress />
+                        break;
+                    case AddressType.Survey:
+                        <PollingAddress />
+                        break;
+                    default:
+                        <NotificationAddress />
+                        break;
+                }
+            </CascadingValue>
         </CascadingValue>
-    </CascadingValue>
-}
+    }
+</CascadingValue>
 
 @code {
 

@@ -6,9 +6,9 @@
     public enum AddressType
     {
         Notification = 0,
-        SocialMedia = 1,
-        VideoMedia = 2,
-        Polling = 3,
+        // SocialMedia = 1,
+        Video = 2,
+        Survey = 3,
     }
 
     /// <summary>
