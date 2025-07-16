@@ -91,10 +91,8 @@
 
     #region Poll Fields and Properties
 
-    private PollAddress? PollAddress => Address as PollAddress;
     private Poll poll = new Poll();
     private string? pollQuestion;
-    private bool pollShowing => IsPoll();
     private string showOptions => poll != null && poll.PollType == PollType.MultipleChoice ? "" : "none";
 
     private PollType pollType
@@ -161,25 +159,20 @@
 
     private async Task SetPollType(PollType pollType)
     {
-        if (PollAddress == null)
+        if (this.Address.AddressType != AddressType.Survey)
         {
             return;
         }
 
         Poll poll = this.poll;
         poll.PollType = pollType;
-        this.PollAddress.SetPollType(poll);
+        this.Address.SetPollType(poll);
         this.StateHasChanged();
         await Task.CompletedTask;
     }
 
     private async Task AddQuestionText(string? question)
     {
-        if (PollAddress == null)
-        {
-            return;
-        }
-
         if (string.IsNullOrEmpty(question))
         {
             return;
@@ -187,46 +180,38 @@
 
         Poll poll = this.poll;
         poll.Question = question;
-        this.PollAddress.SetPollQuestion(poll);
+        this.Address.SetPollQuestion(poll);
         this.StateHasChanged();
         await Task.CompletedTask;
     }
 
     private async Task AddPollOption()
     {
-        if (PollAddress == null)
-        {
-            return;
-        }
-
         if (string.IsNullOrEmpty(this.pollOptionText))
         {
             return;
         }
 
+        // Create a new list to force UI update
         Poll poll = this.poll;
-
-        poll.Options.Add(this.pollOptionText);
-        this.PollAddress.SetPollOptions(poll);
+        poll.Options = poll.Options.Concat(new[] { this.pollOptionText }).ToList();
+        this.Address.SetPollOptions(poll);
         this.pollOptionText = string.Empty;
+        this.Address.SetPoll(poll);
         this.StateHasChanged();
 
         await Task.CompletedTask;
     }
 
-    private bool IsPoll()
-    {
-        return Address is PollAddress;
-    }
-
-    private void SaveAddress()
+    private async Task SaveAddress()
     {
         List<IAddress> addresses = new List<IAddress>(Road.Addresses);
 
         // Set the poll content if it is a PollAddress.
-        if (Address is PollAddress pollAddress)
+        if (this.Address.AddressType == AddressType.Survey)
         {
-            pollAddress.SetPoll(poll);
+            await AddPollOption();
+            this.Address.SetPoll(poll);
         }
 
         if (addresses.Any(a =>  a.Equals(Address)))
@@ -241,11 +226,10 @@
 
         // Save to file.
         TenantManagerService.SaveRoad(Road);
-
+        await this.AddressChanged.InvokeAsync(this);
 
         // Reset the address.
         Address = new Address();
-        this.AddressChanged.InvokeAsync(this);
     }
 
     private void DeleteAddress()

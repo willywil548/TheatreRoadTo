@@ -55,8 +55,11 @@
 </MudTimelineItem>
 
 @code {
-    [CascadingParameter] public IRoadToThere? Road { get; set; }
-    [Inject] ITenantManagerService TenantManagerService { get; set; } = default!;
+    [CascadingParameter]
+    public IRoadToThere? Road { get; set; }
+
+    [Inject]
+    ITenantManagerService TenantManagerService { get; set; } = default!;
 
     // Store poll in a field so it persists across renders
     private Poll? poll;

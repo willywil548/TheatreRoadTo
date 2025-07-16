@@ -114,7 +114,7 @@
         this.road = null;
         this.open = false;
         this.address = new Address();
-        this.StateHasChanged();
+        NavigationManager.Refresh();
         await Task.CompletedTask;
     }
 
@@ -162,7 +162,7 @@
 
         this.road = road;
         this.open = true;
-        this.StateHasChanged();
+
         await Task.CompletedTask;
     }
 }

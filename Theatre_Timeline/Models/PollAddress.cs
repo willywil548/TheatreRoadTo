@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using Theatre_TimeLine.Contracts;
+﻿using Theatre_TimeLine.Contracts;
 
 namespace Theatre_TimeLine.Models
 {
@@ -11,88 +10,6 @@ namespace Theatre_TimeLine.Models
         public PollAddress()
         {
             this.AddressType = AddressType.Survey;
-        }
-
-        /// <summary>
-        /// Sets the poll for the address.
-        /// </summary>
-        /// <param name="poll">The Poll to set.</param>
-        /// <exception cref="ArgumentException">Thrown if the question or options aren't set.</exception>
-        /// <exception cref="InvalidOperationException"></exception>
-        public void SetPollType(Poll? poll)
-        {
-            if (this.AddressType != AddressType.Survey)
-            {
-                throw new InvalidOperationException("The address type is not a poll.");
-            }
-
-            if (poll == null)
-            {
-                return;
-            }
-
-            if (poll.PollType == PollType.YesNo)
-            {
-                poll.Options =
-                [
-                    "Yes",
-                    "No"
-                ];
-            }
-
-            this.Content = JsonSerializer.Serialize(poll);
-        }
-
-        /// <summary>
-        /// Sets the poll for the address.
-        /// </summary>
-        /// <param name="poll">The Poll to set.</param>
-        /// <exception cref="ArgumentException">Thrown if the question or options aren't set.</exception>
-        /// <exception cref="InvalidOperationException"></exception>
-        public void SetPollQuestion(Poll? poll)
-        {
-            if (this.AddressType != AddressType.Survey)
-            {
-                throw new InvalidOperationException("The address type is not a poll.");
-            }
-
-            if (poll == null)
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(poll.Question))
-            {
-                throw new ArgumentException("Poll question cannot be null or empty.", nameof(poll.Question));
-            }
-
-            this.Content = JsonSerializer.Serialize(poll);
-        }
-
-        /// <summary>
-        /// Sets the poll for the address.
-        /// </summary>
-        /// <param name="poll">The Poll to set.</param>
-        /// <exception cref="ArgumentException">Thrown if the question or options aren't set.</exception>
-        /// <exception cref="InvalidOperationException"></exception>
-        public void SetPollOptions(Poll? poll)
-        {
-            if (this.AddressType != AddressType.Survey)
-            {
-                throw new InvalidOperationException("The address type is not a poll.");
-            }
-
-            if (poll == null)
-            {
-                return;
-            }
-
-            if (poll.Options == null || !poll.Options.Any())
-            {
-                throw new ArgumentException("Poll options cannot be null or empty.", nameof(poll.Options));
-            }
-
-            this.Content = JsonSerializer.Serialize(poll);
         }
     }
 }
