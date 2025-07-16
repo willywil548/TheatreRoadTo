@@ -153,10 +153,12 @@
             return Enumerable.Empty<IAddress>();
         }
 
-        return Road.Addresses
+        var locations = Road.Addresses
             .Where(x => x.Location != null)
             .Where(x => !x.DelayRelease || (x.DelayRelease && x.Location < DateTime.Now))
             .Where(x => x.Location <= blockRange.AddHours(24).AddSeconds(-1) && x.Location >= blockRange)
-            .OrderByDescending(x => x.Location);
+            .OrderBy(x => x.Location);
+
+        return locations;
     }
 }
