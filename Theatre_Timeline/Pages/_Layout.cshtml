@@ -42,5 +42,15 @@
             }
         }
     </script>
+    <script>
+        window.registerNavMenuToggle = function(dotnetHelper) {
+            document.addEventListener('keyup', function (e) {
+                if (e.ctrlKey && e.altKey && (e.key === 'e' || e.key === 'E')) {
+                    e.preventDefault();
+                    dotnetHelper.invokeMethodAsync('ToggleNavMenu');
+                }
+            });
+        }
+    </script>
 </body>
 </html>

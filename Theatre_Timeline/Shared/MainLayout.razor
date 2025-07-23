@@ -10,16 +10,15 @@
 <MudSnackbarProvider/>
 
 
-<div class="page" @onkeyup="SetKey">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+<div class="page">
+    @if (showNavMenu)
+    {
+        <div class="sidebar">
+            <NavMenu />
+        </div>
+    }
 
     <main>
-        <div class="top-row px-4">
-            <a href="https://docs.microsoft.com/aspnet/" target="_blank">About</a>
-        </div>
-
         <article class="content px-4">
             @Body
         </article>
@@ -27,10 +26,24 @@
 </div>
 
 @code {
-    private string key = string.Empty;
+    private bool showNavMenu = false;
 
-    private void SetKey(KeyboardEventArgs args)
+    [Inject]
+    private IJSRuntime JS { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        key = args.Key;
+        if (firstRender)
+        {
+            // Register JS event listener for toggling nav menu
+            await JS.InvokeVoidAsync("registerNavMenuToggle", DotNetObjectReference.Create(this));
+        }
+    }
+
+    [JSInvokable]
+    public void ToggleNavMenu()
+    {
+        showNavMenu = !showNavMenu;
+        StateHasChanged();
     }
 }
