@@ -34,5 +34,13 @@
 
     <script src="_framework/blazor.server.js"></script>
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+    <script>
+        window.scrollToBlock = function (blockId) {
+            var el = document.getElementById(blockId);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    </script>
 </body>
 </html>

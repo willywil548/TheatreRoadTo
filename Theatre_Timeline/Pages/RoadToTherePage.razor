@@ -8,6 +8,7 @@
 
 @inject ITenantManagerService TenantManagerService
 @inject NavigationManager NavigationManager
+@inject IJSRuntime JS
 
 @if (tenant is null)
 {
@@ -20,7 +21,6 @@
         @foreach (IRoadToThere road in tenant.Roads)
         {
             <MudTabPanel Text="@road?.Title" ID="road?.RoadId">
-
                 <MudMenu Icon="@Icons.Material.Filled.MoreVert" style="fixed; float:right" AriaLabel="Road Menu Options">
                     <MudMenuItem Label="Create Address" OnClick="() =>  CreateAddress(road)" />
                 </MudMenu>
@@ -30,7 +30,11 @@
                 <MudTimeline>
                     @for (int i = 0; i <= road?.Duration; i++)
                     {
-                        <Block Road="road" BlockIndex="i" Class="align-content-center" OnEditAddress="(address) => OnEditAddress(road, address)" />
+                        Address? address = road.Addresses.Length > i ? road.Addresses[i] : null;
+                        string blockId = address?.Location != null
+                            ? $"block-{address.Location.Value:yyyyMMddHHmm}"
+                            : $"block-{i}";
+                        <Block Road="road" BlockIndex="i" Class="align-content-center" OnEditAddress="(address) => OnEditAddress(road, address)" Id="@blockId" />
                     }
                 </MudTimeline>
             </MudTabPanel>
@@ -60,6 +64,9 @@
 
     private IAddress? address = new Address();
 
+    // Store the nearest block id for scrolling
+    private string? nearestBlockId;
+
     protected override async Task OnInitializedAsync()
     {
         if (string.IsNullOrEmpty(TenantId))
@@ -67,10 +74,10 @@
             UriBuilder uri = new (NavigationManager.BaseUri);
             uri.Path = $"RoadToThere/{Theatre_TimeLine.Services.TenantManagerService.DemoGuid}/{Theatre_TimeLine.Services.TenantManagerService.DemoGuid}";
             NavigationOptions options = new()
-                {
-                    ForceLoad = true,
-                    ReplaceHistoryEntry = true
-                };
+            {
+                ForceLoad = true,
+                ReplaceHistoryEntry = true
+            };
             NavigationManager.NavigateTo(uri.Uri.AbsoluteUri, options);
             return;
         }
@@ -79,16 +86,22 @@
         await base.OnInitializedAsync();
     }
 
-    protected override void OnAfterRender(bool firstRender)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        // Existing tab activation logic
         base.OnAfterRender(firstRender);
 
-        if (mudTabs == null || string.IsNullOrEmpty(this.RoadId))
+        if (tenant == null)
         {
             return;
         }
 
-        if (!Guid.TryParse(this.RoadId, out Guid roadId))
+        if (!Guid.TryParse(this.RoadId ?? string.Empty, out Guid roadId))
+        {
+            roadId = tenant.Roads.FirstOrDefault()?.RoadId ?? Guid.Empty;
+        }
+
+        if (roadId == Guid.Empty)
         {
             return;
         }
@@ -107,6 +120,51 @@
                 break;
             }
         }
+
+        if (firstRender)
+        {
+            // Find the active road
+            IRoadToThere? activeRoad = tenant.Roads.FirstOrDefault(r => r.RoadId == roadId);
+
+            nearestBlockId = GetNearestBlockId(activeRoad);
+
+            if (nearestBlockId != null)
+            {
+                await JS.InvokeVoidAsync("scrollToBlock", nearestBlockId);
+            }
+        }
+
+    }
+
+    private string? GetNearestBlockId(IRoadToThere? activeRoad)
+    {
+        if (activeRoad?.Addresses == null || activeRoad.Addresses.Length == 0)
+        {
+            return null;
+        }
+
+        DateTime now = DateTime.Now;
+
+        // Truncate now to minute
+        DateTime nowMinute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0);
+
+        Address? nearest = activeRoad.Addresses
+            .Where(a => a.Location.HasValue)
+            .OrderBy(a => Math.Abs((TruncateToMinute(a.Location.Value) - nowMinute).Ticks))
+            .FirstOrDefault();
+
+        if (nearest?.Location != null)
+        {
+            return $"block-{TruncateToMinute(nearest.Location.Value):yyyyMMddHHmm}";
+        }
+
+        // fallback to first block
+        return "block-0";
+    }
+
+    private DateTime TruncateToMinute(DateTime dt)
+    {
+        return new DateTime(dt.Year, dt.Month, dt.Day, dt.Hour, dt.Minute, 0);
     }
 
     private async Task OnAddressChange(object sender)

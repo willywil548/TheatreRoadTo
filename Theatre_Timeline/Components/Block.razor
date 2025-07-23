@@ -5,35 +5,36 @@
 
 @inherits LayoutComponentBase
 
-@if (ShouldRenderTimeSeparator())
-{
-    <MudTimelineItem Class="@Class">
-        <MudText>@GetRoadDatePart()</MudText>
-    </MudTimelineItem>
-}
-
-
-<CascadingValue Value="Road">
-    @foreach (var item in this.GetAddresses())
+<div id="@Id">
+    @if (ShouldRenderTimeSeparator())
     {
-        <CascadingValue Value="item">
-            <CascadingValue Value="OnEditAddress">
-                @switch (item.AddressType)
-                {
-                    case AddressType.Video:
-                        <VideoMediaAddress />
-                        break;
-                    case AddressType.Survey:
-                        <PollingAddress />
-                        break;
-                    default:
-                        <NotificationAddress />
-                        break;
-                }
-            </CascadingValue>
-        </CascadingValue>
+        <MudTimelineItem Class="@Class">
+            <MudText>@GetRoadDatePart()</MudText>
+        </MudTimelineItem>
     }
-</CascadingValue>
+
+    <CascadingValue Value="Road">
+        @foreach (var item in this.GetAddresses())
+        {
+            <CascadingValue Value="item">
+                <CascadingValue Value="OnEditAddress">
+                    @switch (item.AddressType)
+                    {
+                        case AddressType.Video:
+                            <VideoMediaAddress />
+                            break;
+                        case AddressType.Survey:
+                            <PollingAddress />
+                            break;
+                        default:
+                            <NotificationAddress />
+                            break;
+                    }
+                </CascadingValue>
+            </CascadingValue>
+        }
+    </CascadingValue>
+</div>
 
 @code {
 
@@ -50,6 +51,9 @@
 
     [Parameter]
     public string? Class { get; set; }
+
+    [Parameter]
+    public string? Id { get; set; }
 
     [Parameter]
     public EventCallback<IAddress> OnEditAddress { get; set; }
