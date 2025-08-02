@@ -30,9 +30,16 @@
                     <img src="@road?.Banner" alt="@road?.Description" />
                 </div>
                 <MudTimeline>
-                    @for (int i = 0; i <= road?.Duration; i++)
+                    @{
+                        // Order addresses by Location (nulls last)
+                        var orderedAddresses = road.Addresses
+                            .OrderBy(a => a.Location ?? DateTime.MaxValue)
+                            .ToArray();
+                        int blockCount = (road.Duration ?? 0) + 1;
+                    }
+                    @for (int i = 0; i < blockCount; i++)
                     {
-                        Address? address = road.Addresses.Length > i ? road.Addresses[i] : null;
+                        Address? address = orderedAddresses.Length > i ? orderedAddresses[i] : null;
                         string blockId = address?.Location != null
                             ? $"block-{address.Location.Value:yyyyMMddHHmm}"
                             : $"block-{i}";
@@ -146,18 +153,28 @@
         }
 
         DateTime now = DateTime.Now;
-
-        // Truncate now to minute
         DateTime nowMinute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0);
 
-        Address? nearest = activeRoad.Addresses
-            .Where(a => a.Location.HasValue)
-            .OrderBy(a => Math.Abs((TruncateToMinute(a.Location.Value) - nowMinute).Ticks))
+        // Find the first address at or after now
+        var future = activeRoad.Addresses
+            .Where(a => a.Location.HasValue && TruncateToMinute(a.Location.Value) >= nowMinute)
+            .OrderBy(a => a.Location)
             .FirstOrDefault();
 
-        if (nearest?.Location != null)
+        if (future?.Location != null)
         {
-            return $"block-{TruncateToMinute(nearest.Location.Value):yyyyMMddHHmm}";
+            return $"block-{TruncateToMinute(future.Location.Value):yyyyMMddHHmm}";
+        }
+
+        // If all addresses are in the past, scroll to the last one
+        var last = activeRoad.Addresses
+            .Where(a => a.Location.HasValue)
+            .OrderBy(a => a.Location)
+            .LastOrDefault();
+
+        if (last?.Location != null)
+        {
+            return $"block-{TruncateToMinute(last.Location.Value):yyyyMMddHHmm}";
         }
 
         // fallback to first block
