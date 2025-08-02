@@ -5,7 +5,7 @@
 @inject ITenantManagerService TenantManagerService
 @inject NavigationManager NavigationManager
 @implements IRoadToThereManager
-
+@attribute [Authorize]
 @page "/TenantManagement/{Tenant?}"
 
 <MudMenu Icon="@Icons.Material.Filled.MoreVert"
