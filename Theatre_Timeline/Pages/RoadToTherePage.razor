@@ -26,7 +26,9 @@
                 </MudMenu>
 
                 <MudText>@road?.Description</MudText>
-                <img src="@road?.Banner" alt="@road?.Description" style="margin: auto;width: 75%;padding: 10px;" />
+                <div class="image-center-container">
+                    <img src="@road?.Banner" alt="@road?.Description" />
+                </div>
                 <MudTimeline>
                     @for (int i = 0; i <= road?.Duration; i++)
                     {
