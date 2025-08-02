@@ -11,4 +11,5 @@
 *.suo
 /.vs/**/*
 *.v2
+*.user
 /Theatre_Timeline/wwwroot/temp
