@@ -58,6 +58,9 @@ builder.Services.AddSingleton<ITenantManagerService, TenantManagerService>();
 // Inject the clipboard service.
 builder.Services.AddScoped<IClipboardService, ClipboardService>();
 
+// Add controllers
+builder.Services.AddControllers();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -76,5 +79,6 @@ app.UseRouting();
 
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
+app.MapControllers();
 
 app.Run();
