@@ -1,0 +1,94 @@
+﻿@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+@namespace Theatre_TimeLine.Components
+@inherits LayoutComponentBase
+
+<MudCard Class="card">
+    <MudCardHeader Class="card card-header">@this.TenantContainer.TenantName</MudCardHeader>
+    <MudCardContent>
+        <h6>ID: @TenantContainer.TenantId</h6>
+        Description:
+        <p>
+            @TenantContainer.Description
+        </p>
+        <h6>Roads:</h6>
+        <MudExpansionPanels>
+            @foreach (IRoadToThere road in TenantContainer.Roads)
+            {
+                <MudExpansionPanel Text="@road.ToString()">
+                    <RoadConfiguration Road="@road" OnSaveRoad="@OnSaveRoad" OnRemoveRoad="@OnRemoveRoad" />
+                </MudExpansionPanel>
+                <br />
+            }
+        </MudExpansionPanels>
+    </MudCardContent>
+    <MudCardActions>
+        <MudButtonGroup Color="Color.Primary">
+            <MudButton OnClick="ButtonClicked">@buttonText.Item2</MudButton>
+            <MudMenu Icon="@Icons.Material.Filled.ArrowDropDown" Style="align-self: auto;">
+                @foreach (string action in tenantActions)
+                {
+                    <MudMenuItem OnClick="() => SetButtonText(Array.IndexOf(tenantActions, action))">@action</MudMenuItem>
+                }
+            </MudMenu>
+        </MudButtonGroup>
+    </MudCardActions>
+</MudCard>
+
+@code {
+    private static readonly string[] tenantActions =
+    {
+        "Create Road",
+        "Remove Tenant"
+    };
+
+    private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            SetButtonText(0);
+        }
+
+        return base.OnAfterRenderAsync(firstRender);
+    }
+
+    [Parameter]
+    public ITenantContainer TenantContainer { get; set; } = new TenantContainer();
+
+    [Parameter]
+    public Action<ITenantContainer>? OnRemoveTenant { get; set; }
+
+    [Parameter]
+    public Action<ITenantContainer>? OnCreateRoad { get; set; }
+
+    [Parameter]
+    public Action<IRoadToThere>? OnSaveRoad { get; set; }
+
+    [Parameter]
+    public Action<Guid>? OnRemoveRoad { get; set; }
+
+
+    [Parameter]
+    public Action<ITenantContainer>? OnClick { get; set; }
+
+    private void SetButtonText(int id)
+    {
+        buttonText = Tuple.Create(id, tenantActions[id]);
+    }
+
+    private void ButtonClicked()
+    {
+        OnClick?.Invoke(TenantContainer);
+        switch (buttonText.Item1)
+        {
+            case 0:
+                OnCreateRoad?.Invoke(TenantContainer);
+                break;
+            case 1:
+                OnRemoveTenant?.Invoke(TenantContainer);
+                break;
+        }
+    }
+}

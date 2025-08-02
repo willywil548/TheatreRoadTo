@@ -1,0 +1,284 @@
+﻿@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+
+@inject ITenantManagerService TenantManagerService
+
+<MudPaper>
+    <!-- Poll Type -->
+    <MudSelect @bind-Value="addressType" Label="Post Type?" HelperText="Notification, Video, Social Media" >
+        @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
+        {
+            <MudSelectItem Value="@item">@item</MudSelectItem>
+        }
+    </MudSelect>
+    <!-- Location -->
+    <MudDatePicker Label="Date of Event" @bind-Date="Address.Location" />
+    <MudTimePicker Label="Time of Event" AmPm="true" TimeChanged="(time) => OnTimeChange(time)" Time="Address?.Location?.TimeOfDay" />
+
+    <!-- Title of Location  -->
+    <MudTextField @bind-Value="Address.Title" Label="Title" Variant="Variant.Text"></MudTextField>
+
+    <!-- Description of Location  -->
+    <MudTextField @bind-Value="Address.Description" Label="Description" Variant="Variant.Text"></MudTextField>
+
+    <!-- Poll -->
+    @if (addressType == AddressType.Survey)
+    {
+        <div>
+            <MudSelect @bind-Value="@pollType" Label="Poll Type:" HelperText="Muliple Choice, Yes or No">
+                @foreach (PollType pollingType in Enum.GetValues(typeof(PollType)))
+                {
+                    <MudSelectItem Value="@pollingType">@pollingType</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField T="string" Label="Question" Variant="Variant.Text" TextChanged="AddQuestionText" />
+            <div style="display:@showOptions">
+                @foreach (string option in poll.Options)
+                {
+                    <MudText>@option</MudText>
+                }
+                <MudTextField Label="New Option:" Variant="Variant.Text" @bind-Value="pollOptionText" />
+                <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddPollOption" IconSize="Size.Small" />
+            </div>
+        </div>
+    }
+    else
+    {
+        <div>
+            <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text"></MudTextField>
+        </div>
+    }
+
+    <MudCheckBox @bind-Value="Address.DelayRelease" Label="Delay Release"></MudCheckBox>
+    <MudButton Color="Color.Primary" OnClick="SaveAddress">Save</MudButton>
+    <MudButton Color="Color.Secondary" OnClick="DeleteAddress">Delete</MudButton>
+    <MudButton Color="Color.Tertiary" OnClick="CancelAddress">Cancel</MudButton>
+</MudPaper>
+
+@code {
+
+    private event EventHandler<AddressType> AddressTypeChanged;
+
+    [Parameter]
+    public IAddress Address { get; set; } = new Address();
+
+    [Parameter]
+    public IRoadToThere Road { get; set; } = new RoadToThere();
+
+    [Parameter]
+    public EventCallback AddressChanged { get; set; }
+
+    [Parameter]
+    public EventCallback AddressDeleted { get; set; }
+
+    private AddressType addressType
+    {
+        get
+        {
+            return this.Address.AddressType;
+        }
+        set
+        {
+            if (this.Address.AddressType == value)
+            {
+                return;
+            }
+
+            this.Address.AddressType = value;
+            this.AddressTypeChanged?.Invoke(this, value);
+        }
+    }
+
+    #region Poll Fields and Properties
+
+    private Poll poll = new Poll();
+    private string? pollQuestion;
+    private string showOptions => poll != null && poll.PollType == PollType.MultipleChoice ? "" : "none";
+
+    private PollType pollType
+    {
+        get
+        {
+            return this.poll.PollType;
+        }
+        set
+        {
+            this.SetPollType(value)
+                .ConfigureAwait(false)
+                .GetAwaiter();
+        }
+    }
+
+    private string pollQuestionText
+    {
+        get
+        {
+            return this.poll.Question;
+        }
+        set
+        {
+            this.AddQuestionText(value)
+                .ConfigureAwait(false)
+                .GetAwaiter();
+        }
+    }
+
+    private string pollOptionText = string.Empty;
+
+    #endregion
+
+    public void SetAddress(IAddress address)
+    {
+        if (address is Address addr)
+        {
+            Address = addr;
+        }
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            this.AddressTypeChanged += OnAddressTypeChanged;
+        }
+
+        return base.OnAfterRenderAsync(firstRender);
+    }
+
+    protected override Task OnParametersSetAsync()
+    {
+        // Ensure poll type is set from the existing poll when editing
+        if (this.Address.TryGetPoll(out Poll poll))
+        {
+            this.poll = poll;
+            this.pollType = this.poll.PollType; // This will trigger the setter and update the UI
+        }
+
+        return base.OnParametersSetAsync();
+    }
+
+    private async Task SetPollType(PollType pollType)
+    {
+        if (this.Address.AddressType != AddressType.Survey)
+        {
+            return;
+        }
+
+        Poll poll = this.poll;
+        poll.PollType = pollType;
+        this.Address.SetPollType(poll);
+        this.StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private async Task AddQuestionText(string? question)
+    {
+        if (string.IsNullOrEmpty(question))
+        {
+            return;
+        }
+
+        Poll poll = this.poll;
+        poll.Question = question;
+        this.Address.SetPollQuestion(poll);
+        this.StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private async Task AddPollOption()
+    {
+        if (string.IsNullOrEmpty(this.pollOptionText))
+        {
+            return;
+        }
+
+        // Create a new list to force UI update
+        Poll poll = this.poll;
+        poll.Options = poll.Options.Concat(new[] { this.pollOptionText }).ToList();
+        this.Address.SetPollOptions(poll);
+        this.pollOptionText = string.Empty;
+        this.Address.SetPoll(poll);
+        this.StateHasChanged();
+
+        await Task.CompletedTask;
+    }
+
+    private async Task SaveAddress()
+    {
+        List<IAddress> addresses = new List<IAddress>(Road.Addresses);
+
+        // Set the poll content if it is a PollAddress.
+        if (this.Address.AddressType == AddressType.Survey)
+        {
+            await AddPollOption();
+            this.Address.SetPoll(poll);
+        }
+
+        if (addresses.Any(a =>  a.Equals(Address)))
+        {
+            // If the address already exists, remove it first.
+            addresses.Remove(Address);
+        }
+
+        // Save address.
+        addresses.Add(Address);
+        Road.Addresses = addresses.Cast<Address>().ToArray();
+
+        // Save to file.
+        TenantManagerService.SaveRoad(Road);
+        await this.AddressChanged.InvokeAsync(this);
+
+        // Reset the address.
+        Address = new Address();
+    }
+
+    private void DeleteAddress()
+    {
+        List<IAddress> addresses = new List<IAddress>(Road.Addresses.Where(a => !a.Equals(Address)));
+        Road.Addresses = addresses.Cast<Address>().ToArray();
+
+        // Save to file.
+        TenantManagerService.SaveRoad(Road);
+
+
+        // Reset the address.
+        Address = new Address();
+        this.AddressChanged.InvokeAsync(this);
+    }
+
+    private void CancelAddress()
+    {
+        Address = new Address();
+        this.AddressChanged.InvokeAsync(this);
+    }
+
+    private void OnTimeChange(TimeSpan? time)
+    {
+        if (time == null || Address.Location == null)
+        {
+            return;
+        }
+
+        Address.Location = Address.Location.Value.Date.Add(time.Value);
+    }
+
+    private void OnAddressTypeChanged(object sender, AddressType addressType)
+    {
+        if (addressType == AddressType.Survey)
+        {
+            if (!(Address is PollAddress))
+            {
+                Address = new PollAddress();
+            }
+
+            return;
+        }
+
+        if (Address is PollAddress)
+        {
+            Address = new Address();
+        }
+
+        this.StateHasChanged();
+    }
+}
