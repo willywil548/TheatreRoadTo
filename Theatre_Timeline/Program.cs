@@ -1,17 +1,15 @@
 using Cropper.Blazor.Extensions;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Identity.Web;
+using Microsoft.Identity.Web.UI;
 using MudBlazor;
 using MudBlazor.Services;
 using System.Diagnostics;
 using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Services;
+using Microsoft.AspNetCore.Authentication.Cookies;
 
 var builder = WebApplication.CreateBuilder(args);
-
-Trace.WriteLine("Environment Variables:");
-foreach (string var in System.Environment.GetEnvironmentVariables().Keys)
-{
-    Trace.WriteLine($"{var} = {System.Environment.GetEnvironmentVariable(var)}");
-}
 
 string webroot = builder.Environment.WebRootPath;
 Trace.WriteLine($"ContentRoot Path: {builder.Environment.ContentRootPath}");
@@ -20,8 +18,74 @@ Trace.WriteLine($"WebRootPath: {webroot}");
 builder.Configuration.AddEnvironmentVariables();
 builder.Configuration["WebRootPath"] = webroot;
 
+#if DEBUG
+{
+    string? secret = Environment.GetEnvironmentVariable("AzureAd__ClientSecret");
+    if (string.IsNullOrEmpty(secret))
+    {
+        throw new ArgumentNullException(nameof(secret), "Client secret not set in the environment variables.");
+    }
+
+    builder.Configuration["AzureAd:ClientSecret"] = secret;
+
+    secret = null;
+}
+#endif
+
 // Add services to the container.
-builder.Services.AddRazorPages();
+builder.Services.AddHttpContextAccessor()
+    .AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+    .AddMicrosoftIdentityWebApp(builder.Configuration.GetSection("AzureAd"));
+
+builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme, options =>
+{
+    // Normalize claims so [Authorize(Roles="...")] and User.Identity.Name work as expected.
+    options.TokenValidationParameters.NameClaimType = "name";
+    options.TokenValidationParameters.RoleClaimType = "roles";
+    options.SaveTokens = true; // Useful if you later call downstream APIs
+
+    options.Events = new OpenIdConnectEvents
+    {
+        OnRemoteFailure = ctx =>
+        {
+            // Logs the raw error; surface in Debug/Console as needed
+            Debug.WriteLine($"OIDC RemoteFailure: {ctx.Failure?.Message}");
+            return Task.CompletedTask;
+        },
+        OnAuthenticationFailed = ctx =>
+        {
+            Debug.WriteLine($"OIDC AuthFailed: {ctx.Exception?.Message}");
+            return Task.CompletedTask;
+        },
+        // Uncomment temporarily to force a fresh sign-in (helps with stale AAD sessions)
+        //OnRedirectToIdentityProvider = ctx =>
+        //{
+        //    ctx.ProtocolMessage.Prompt = "login";
+        //    return Task.CompletedTask;
+        //}
+    };
+});
+
+builder.Services.Configure<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme, options =>
+{
+    options.SlidingExpiration = true;
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+});
+
+builder.Services.AddAuthorization(options =>
+{
+    // Require auth by default. Mark public pages/components with [AllowAnonymous].
+    options.FallbackPolicy = options.DefaultPolicy;
+
+    // Example policy based on app role
+    options.AddPolicy("TenantAdminsOnly", policy =>
+        policy.RequireClaim("roles", "Tenant.Admin"));
+});
+
+builder.Services.AddRazorPages()
+    .AddMicrosoftIdentityUI();
 
 // Add server-side Blazor.
 // Configure the default connection string for SignalR.
@@ -30,7 +94,8 @@ builder.Services.AddServerSideBlazor()
     {
         // Set the maximum message size to 32 MB.
         options.MaximumReceiveMessageSize = 32 * 1024 * 1000;
-    });
+    })
+    .AddMicrosoftIdentityConsentHandler();
 
 // Add MudBlazor services.
 builder.Services.AddMudServices(config =>
@@ -72,13 +137,18 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseStaticFiles();
-
 app.UseRouting();
 
-app.MapBlazorHub();
-app.MapFallbackToPage("/_Host");
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapControllers();
+
+// Require auth for the Blazor Hub
+app.MapBlazorHub().RequireAuthorization();
+
+// Allow anonymous for the initial page request
+app.MapFallbackToPage("/_Host").AllowAnonymous();
 
 app.Run();
