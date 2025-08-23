@@ -1,0 +1,10 @@
+<AuthorizeView>
+    <Authorized>
+        <span>Hello, @context.User.Identity?.Name</span>
+        <span class="mx-2">|</span>
+        <a href="MicrosoftIdentity/Account/SignOut">Sign out</a>
+    </Authorized>
+    <NotAuthorized>
+        <a href="MicrosoftIdentity/Account/SignIn">Sign in</a>
+    </NotAuthorized>
+</AuthorizeView>
