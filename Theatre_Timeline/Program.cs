@@ -1,4 +1,6 @@
+using Azure.Identity;
 using Cropper.Blazor.Extensions;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
@@ -7,7 +9,6 @@ using MudBlazor.Services;
 using System.Diagnostics;
 using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Services;
-using Microsoft.AspNetCore.Authentication.Cookies;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,9 +19,20 @@ Trace.WriteLine($"WebRootPath: {webroot}");
 builder.Configuration.AddEnvironmentVariables();
 builder.Configuration["WebRootPath"] = webroot;
 
-#if DEBUG
+bool useCert = builder.Configuration.GetValue<bool>("UseKeyVaultCert");
+
+string? sourceType = builder.Configuration.GetValue<string>("AzureAd:ClientCertificates:SourceType");
+string? certificateName = builder.Configuration.GetValue<string>("AzureAd:ClientCertificates:CertificateName");
+string? keyVaultUrl = builder.Configuration.GetValue<string>("AzureAd:ClientCertificates:KeyVaultUrl");
+
+if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
 {
-    string? secret = Environment.GetEnvironmentVariable("AzureAd__ClientSecret");
+    var credential = new DefaultAzureCredential();
+    builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
+}
+else
+{
+    string? secret = builder.Configuration.GetValue<string>("AzureAd:ClientSecret");
     if (string.IsNullOrEmpty(secret))
     {
         throw new ArgumentNullException(nameof(secret), "Client secret not set in the environment variables.");
@@ -30,7 +42,6 @@ builder.Configuration["WebRootPath"] = webroot;
 
     secret = null;
 }
-#endif
 
 // Add services to the container.
 builder.Services.AddHttpContextAccessor()
