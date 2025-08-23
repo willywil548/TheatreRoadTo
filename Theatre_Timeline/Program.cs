@@ -153,14 +153,6 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers();
-
-// Require auth for the Blazor Hub
-app.MapBlazorHub().RequireAuthorization();
-
-// Allow anonymous for the initial page request
-app.MapFallbackToPage("/_Host").AllowAnonymous();
-
 app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration cfg) =>
 {
     var clientId = cfg["AzureAd:ClientId"];
@@ -178,7 +170,14 @@ app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration c
         }
     });
 })
-.AllowAnonymous()
-.Produces(StatusCodes.Status200OK, typeof(void), "application/json");
+.AllowAnonymous();
+
+app.MapControllers();
+
+// Require auth for the Blazor Hub
+app.MapBlazorHub().RequireAuthorization();
+
+// Allow anonymous for the initial page request
+app.MapFallbackToPage("/_Host").AllowAnonymous();
 
 app.Run();
