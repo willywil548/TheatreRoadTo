@@ -12,6 +12,17 @@ using Theatre_TimeLine.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+builder.Logging.AddEventSourceLogger(); // optional
+builder.Logging.AddAzureWebAppDiagnostics(); // if deploying to Azure App Service
+
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+builder.Logging.AddFilter("Theatre_TimeLine.Controllers.AuthenticationMetaDataController", LogLevel.Debug);
+
+// Or global minimum (still overridden by specific category levels)
+builder.Logging.SetMinimumLevel(LogLevel.Information);
+
 string webroot = builder.Environment.WebRootPath;
 Trace.WriteLine($"ContentRoot Path: {builder.Environment.ContentRootPath}");
 Trace.WriteLine($"WebRootPath: {webroot}");
@@ -41,7 +52,7 @@ builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.Authentic
     // Normalize claims so [Authorize(Roles="...")] and User.Identity.Name work as expected.
     options.TokenValidationParameters.NameClaimType = "name";
     options.TokenValidationParameters.RoleClaimType = "roles";
-    options.SaveTokens = true; // Useful if you later call downstream APIs
+    options.SaveTokens = true; // Useful if you later call downstream API
 
     options.Events = new OpenIdConnectEvents
     {
