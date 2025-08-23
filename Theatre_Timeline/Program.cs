@@ -2,6 +2,7 @@ using Azure.Identity;
 using Cropper.Blazor.Extensions;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
 using MudBlazor;
@@ -160,5 +161,25 @@ app.MapBlazorHub().RequireAuthorization();
 
 // Allow anonymous for the initial page request
 app.MapFallbackToPage("/_Host").AllowAnonymous();
+
+app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration cfg) =>
+{
+    var clientId = cfg["AzureAd:ClientId"];
+    if (string.IsNullOrWhiteSpace(clientId))
+    {
+        // Log and return 500 with context
+        return Results.Problem("AzureAd:ClientId missing");
+    }
+
+    return Results.Json(new
+    {
+        associatedApplications = new[]
+        {
+            new { applicationId = clientId }
+        }
+    });
+})
+.AllowAnonymous()
+.Produces(StatusCodes.Status200OK, typeof(void), "application/json");
 
 app.Run();
