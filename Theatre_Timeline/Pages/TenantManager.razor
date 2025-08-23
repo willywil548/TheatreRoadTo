@@ -1,0 +1,146 @@
+@using System.Security.Claims
+@using Theatre_TimeLine.Components
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Services
+@inject ITenantManagerService TenantManagerService
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@implements IRoadToThereManager
+@attribute [Authorize]
+@page "/TenantManagement/{Tenant?}"
+
+@if (user != null)
+{
+    <pre>User: @(user.Identity?.Name ?? "no user")</pre>
+}
+
+<MudMenu Icon="@Icons.Material.Filled.MoreVert"
+         style="fixed;"
+         AriaLabel="Open user menu">
+    <MudMenuItem Label="Create Tenant" OnClick="CreateTenant" />
+    <MudMenuItem Label="My account" />
+    <MudMenuItem Label="Logout" />
+</MudMenu>
+
+<MudPaper Elevation="0" Style="overflow:auto; position:relative; min-height:75vh" Square="true">
+    <div class="d-flex justify-center align-center mud-height-full mud-width-full">
+        <MudExpansionPanels>
+            @foreach (ITenantContainer container in TenantManagerService.GetTenants())
+            {
+                <MudExpansionPanel Text="@container.TenantName" Expanded="ShouldOpenPanel(container.TenantId.ToString())" ExpandedChanged="(changedArgs) => OnPanelChange(tenantId: container.TenantId.ToString(), changedArgs)">
+                    <TenantConfiguration TenantContainer="@container"
+                                         OnCreateRoad="CreateRoad"
+                                         OnRemoveTenant="RemoveTenant"
+                                         OnSaveRoad="SaveRoad"
+                                         OnRemoveRoad="RemoveRoad"
+                                         OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
+                </MudExpansionPanel>
+
+                <br />
+            }
+        </MudExpansionPanels>
+    </div>
+</MudPaper>
+
+@code {
+    private bool _drawerOpen = true;
+    private ClaimsPrincipal? user;
+
+    [Parameter]
+    public string? Tenant { get; set; }  = string.Empty;
+
+    protected async override Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+    }
+
+    public void CreateRoad(ITenantContainer tenantContainer)
+    {
+        RoadToThere roadToThere = new RoadToThere()
+            {
+                RoadId = Guid.NewGuid(),
+                TenantId = tenantContainer.TenantId,
+                Title = "Test Road title",
+            };
+        tenantContainer.SaveRoad(roadToThere);
+    }
+
+    /// <summary>
+    /// Save the road to the tenant.
+    /// </summary>
+    /// <param name="roadToThere"><see cref="RoadToThere"/>.</param>
+    public void SaveRoad(IRoadToThere roadToThere)
+    {
+        TenantManagerService.SaveRoad(roadToThere);
+        this.StateHasChanged();
+    }
+
+    /// <summary>
+    /// Remove the road from the tenant.
+    /// </summary>
+    /// <param name="roadId">Road ID.</param>
+    public void RemoveRoad(Guid roadId)
+    {
+        TenantManagerService.RemoveRoad(roadId);
+        this.StateHasChanged();
+    }
+
+    /// <summary>
+    /// Get the road from the tenant.
+    /// </summary>
+    /// <param name="roadId">Road ID.</param>
+    /// <returns><see cref="IRoadToThere"/>.</returns>
+    public IRoadToThere GetRoad(Guid roadId) => TenantManagerService.GetRoad(roadId);
+
+    private void CreateTenant()
+    {
+        TenantManagerService.CreateTenant(new TenantContainer()
+            {
+                TenantId = Guid.NewGuid(),
+                Description = "Test description",
+                TenantName = "Test Name"
+            });
+        this.StateHasChanged();
+    }
+
+    private void RemoveTenant(ITenantContainer tenantContainer)
+    {
+        TenantManagerService.RemoveTenant(tenantContainer.TenantId);
+        this.StateHasChanged();
+    }
+
+    private bool TryGetTenantContainer(out ITenantContainer? tenantContainer)
+    {
+        tenantContainer = null;
+        if (!string.IsNullOrEmpty(this.Tenant) && Guid.TryParse(this.Tenant, out Guid result))
+        {
+            tenantContainer = TenantManagerService.GetTenant(result);
+        }
+
+        return tenantContainer != null;
+    }
+
+    private bool ShouldOpenPanel(string tenant)
+    {
+        if (string.IsNullOrEmpty(this.Tenant))
+        {
+            return false;
+        }
+
+        return string.Equals(tenant, this.Tenant);
+    }
+
+    private void OnPanelChange(string tenantId, bool expanding)
+    {
+        if (!expanding)
+        {
+            return;
+        }
+
+        UriBuilder uri = new(NavigationManager.BaseUri);
+        uri.Path = $"TenantManagement/{tenantId}";
+        NavigationManager.NavigateTo(uri.Uri.AbsoluteUri);
+    }
+}

@@ -1,0 +1,16 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+*.db
+*.db-shm
+*.db-wal
+*.vsidx
+*.testlog
+*.manifest
+*.suo
+/.vs/**/*
+*.v2
+*.user
+/Theatre_Timeline/wwwroot/temp
+/Theatre_Timeline/Theatre_Timeline.csproj.user

@@ -1,0 +1,245 @@
+﻿@namespace Theatre_TimeLine.Pages
+
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Components
+
+@page "/RoadToThere/{TenantId?}/{RoadId?}"
+
+@inject ITenantManagerService TenantManagerService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JS
+
+@if (tenant is null)
+{
+    <MudText>Loading...</MudText>
+    return;
+}
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" @ref="mudTabs" ActivePanelIndexChanged="(index) => OnTabChangedAsync(index)">
+    <div style="margin: auto;width: 75%;padding: 10px;">
+        @foreach (IRoadToThere road in tenant.Roads)
+        {
+            <MudTabPanel Text="@road?.Title" ID="road?.RoadId">
+                <MudMenu Icon="@Icons.Material.Filled.MoreVert" style="fixed; float:right" AriaLabel="Road Menu Options">
+                    <MudMenuItem Label="Create Address" OnClick="() =>  CreateAddress(road)" />
+                </MudMenu>
+
+                <MudText>@road?.Description</MudText>
+                <div class="image-center-container">
+                    <img src="@road?.Banner" alt="@road?.Description" />
+                </div>
+                <MudTimeline>
+                    @{
+                        // Order addresses by Location (nulls last)
+                        var orderedAddresses = road.Addresses
+                            .OrderBy(a => a.Location ?? DateTime.MaxValue)
+                            .ToArray();
+                        int blockCount = road.Duration + 1;
+                    }
+                    @for (int i = 0; i < blockCount; i++)
+                    {
+                        Address? address = orderedAddresses.Length > i ? orderedAddresses[i] : null;
+                        string blockId = address?.Location != null
+                            ? $"block-{address.Location.Value:yyyyMMddHHmm}"
+                            : $"block-{i}";
+                        <Block Road="road" BlockIndex="i" Class="align-content-center" OnEditAddress="(address) => OnEditAddress(road, address)" Id="@blockId" />
+                    }
+                </MudTimeline>
+            </MudTabPanel>
+        }
+    </div>
+</MudTabs>
+
+<MudPopover Open="@open" Class="pa-4" Fixed="false" AnchorOrigin="Origin.CenterCenter" >
+    <AddressEditor @ref="addressEditor" AddressChanged="OnAddressChange" Road="road" Address="address" />
+</MudPopover>
+
+@code {
+
+    private ITenantContainer? tenant;
+    private bool open = false;
+    private AddressEditor addressEditor = new();
+
+    [Parameter]
+    public string? TenantId { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? RoadId { get; set; } = string.Empty;
+
+    private MudTabs? mudTabs;
+
+    private IRoadToThere? road;
+
+    private IAddress? address = new Address();
+
+    // Store the nearest block id for scrolling
+    private string? nearestBlockId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (string.IsNullOrEmpty(TenantId))
+        {
+            UriBuilder uri = new (NavigationManager.BaseUri);
+            uri.Path = $"RoadToThere/{Theatre_TimeLine.Services.TenantManagerService.DemoGuid}/{Theatre_TimeLine.Services.TenantManagerService.DemoGuid}";
+            NavigationOptions options = new()
+            {
+                ForceLoad = true,
+                ReplaceHistoryEntry = true
+            };
+            NavigationManager.NavigateTo(uri.Uri.AbsoluteUri, options);
+            return;
+        }
+
+        tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId));
+        await base.OnInitializedAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Existing tab activation logic
+        base.OnAfterRender(firstRender);
+
+        if (tenant == null)
+        {
+            return;
+        }
+
+        if (!Guid.TryParse(this.RoadId ?? string.Empty, out Guid roadId))
+        {
+            roadId = tenant.Roads.FirstOrDefault()?.RoadId ?? Guid.Empty;
+        }
+
+        if (roadId == Guid.Empty)
+        {
+            return;
+        }
+
+        foreach (var tab in mudTabs.Panels)
+        {
+            // If id is null or not a guid continue.
+            if (tab.ID == null || !(tab.ID is Guid))
+            {
+                continue;
+            }
+
+            if ((Guid)tab.ID == roadId)
+            {
+                mudTabs.ActivatePanel(tab);
+                break;
+            }
+        }
+
+        if (firstRender)
+        {
+            // Find the active road
+            IRoadToThere? activeRoad = tenant.Roads.FirstOrDefault(r => r.RoadId == roadId);
+
+            nearestBlockId = GetNearestBlockId(activeRoad);
+
+            if (nearestBlockId != null)
+            {
+                await JS.InvokeVoidAsync("scrollToBlock", nearestBlockId);
+            }
+        }
+
+    }
+
+    private string? GetNearestBlockId(IRoadToThere? activeRoad)
+    {
+        if (activeRoad?.Addresses == null || activeRoad.Addresses.Length == 0)
+        {
+            return null;
+        }
+
+        DateTime now = DateTime.Now;
+        DateTime nowMinute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0);
+
+        // Find the first address at or after now
+        var future = activeRoad.Addresses
+            .Where(a => a.Location.HasValue && TruncateToMinute(a.Location.Value) >= nowMinute)
+            .OrderBy(a => a.Location)
+            .FirstOrDefault();
+
+        if (future?.Location != null)
+        {
+            return $"block-{TruncateToMinute(future.Location.Value):yyyyMMddHHmm}";
+        }
+
+        // If all addresses are in the past, scroll to the last one
+        var last = activeRoad.Addresses
+            .Where(a => a.Location.HasValue)
+            .OrderBy(a => a.Location)
+            .LastOrDefault();
+
+        if (last?.Location != null)
+        {
+            return $"block-{TruncateToMinute(last.Location.Value):yyyyMMddHHmm}";
+        }
+
+        // fallback to first block
+        return "block-0";
+    }
+
+    private DateTime TruncateToMinute(DateTime dt)
+    {
+        return new DateTime(dt.Year, dt.Month, dt.Day, dt.Hour, dt.Minute, 0);
+    }
+
+    private async Task OnAddressChange(object sender)
+    {
+        this.road = null;
+        this.open = false;
+        this.address = new Address();
+        NavigationManager.Refresh();
+        await Task.CompletedTask;
+    }
+
+    private async Task OnTabChangedAsync(int tabIndex)
+    {
+        if (mudTabs == null)
+        {
+            return;
+        }
+
+        if (!(mudTabs.Panels[tabIndex].ID is Guid roadId))
+        {
+            return;
+        }
+
+        NavigationManager.NavigateTo($"RoadToThere/{TenantId}/{roadId}");
+        await Task.CompletedTask;
+    }
+
+    private async Task CreateAddress(IRoadToThere? road)
+    {
+        if (road == null)
+        {
+            return;
+        }
+
+        this.road = road;
+        this.open = true;
+        await Task.CompletedTask;
+    }
+
+    private async Task OnEditAddress(IRoadToThere? road, IAddress? address)
+    {
+        if (road == null)
+        {
+            return;
+        }
+
+        if (address == null)
+        {
+            return;
+        }
+
+        this.address = address;
+
+        this.road = road;
+        this.open = true;
+
+        await Task.CompletedTask;
+    }
+}

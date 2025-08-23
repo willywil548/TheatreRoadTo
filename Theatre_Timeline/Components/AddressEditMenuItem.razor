@@ -1,0 +1,20 @@
+﻿@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+
+<MudCardActions>
+    <MudButton Variant="Variant.Text" Color="Color.Warning" OnClick="EditAddressAsync">Edit</MudButton>
+</MudCardActions>
+
+@code {
+
+    [CascadingParameter]
+    public IAddress? Address { get; set; } = new Address();
+
+    [CascadingParameter]
+    public EventCallback<IAddress> OnEditAddress { get; set; }
+
+    private async Task EditAddressAsync()
+    {
+        await OnEditAddress.InvokeAsync(Address);
+    }
+}

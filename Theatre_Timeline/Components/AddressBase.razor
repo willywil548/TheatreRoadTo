@@ -1,0 +1,57 @@
+﻿@namespace Theatre_TimeLine.Components
+@using Theatre_TimeLine.Contracts;
+@using Theatre_TimeLine.Models
+
+@inherits LayoutComponentBase
+
+@code {
+
+    [CascadingParameter]
+    public IAddress? Address { get; set; } = new Address();
+
+    [CascadingParameter]
+    public EventCallback<IAddress> OnEditAddress { get; set; }
+
+    private protected Color GetColor(IAddress? address)
+    {
+        if (address == null)
+        {
+            return Color.Tertiary;
+        }
+
+        switch (address.AddressType)
+        {
+            case AddressType.Video:
+                return Color.Info;
+            // case AddressType.SocialMedia:
+            //     return Color.Primary;
+            case AddressType.Notification:
+                return Color.Success;
+            default:
+                return Color.Tertiary;
+        }
+    }
+
+    private protected string GetContentText(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return string.Empty;
+        }
+
+        // Simple URI detection (https only)
+        var words = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < words.Length; i++)
+        {
+            if (Uri.TryCreate(words[i], UriKind.Absolute, out var uri) &&
+                uri.Scheme == Uri.UriSchemeHttps)
+            {
+                var host = uri.Host.Replace("www.", "");
+                var link = $"<a href=\"{uri}\" target=\"_blank\" rel=\"noopener noreferrer\">{host}</a>";
+                words[i] = link;
+            }
+        }
+
+        return string.Join(' ', words);
+    }
+}
