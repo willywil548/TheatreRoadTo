@@ -30,18 +30,6 @@ if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
     var credential = new DefaultAzureCredential();
     builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
 }
-else
-{
-    string? secret = builder.Configuration.GetValue<string>("AzureAd:ClientSecret");
-    if (string.IsNullOrEmpty(secret))
-    {
-        throw new ArgumentNullException(nameof(secret), "Client secret not set in the environment variables.");
-    }
-
-    builder.Configuration["AzureAd:ClientSecret"] = secret;
-
-    secret = null;
-}
 
 // Add services to the container.
 builder.Services.AddHttpContextAccessor()
