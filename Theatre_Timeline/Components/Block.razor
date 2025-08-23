@@ -1,0 +1,168 @@
+﻿@namespace Theatre_TimeLine.Components
+@using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Contracts
+@using System.Linq
+
+@inherits LayoutComponentBase
+
+<div id="@Id">
+    @if (ShouldRenderTimeSeparator())
+    {
+        <MudTimelineItem Class="@Class">
+            <MudText>@GetRoadDatePart()</MudText>
+        </MudTimelineItem>
+    }
+
+    <CascadingValue Value="Road">
+        @foreach (var item in this.GetAddresses())
+        {
+            <CascadingValue Value="item">
+                <CascadingValue Value="OnEditAddress">
+                    @switch (item.AddressType)
+                    {
+                        case AddressType.Video:
+                            <VideoMediaAddress />
+                            break;
+                        case AddressType.Survey:
+                            <PollingAddress />
+                            break;
+                        default:
+                            <NotificationAddress />
+                            break;
+                    }
+                </CascadingValue>
+            </CascadingValue>
+        }
+    </CascadingValue>
+</div>
+
+@code {
+
+    private int measurement = 24;
+
+    [Parameter]
+    public IRoadToThere Road { get; set; } = new RoadToThere();
+
+    [Parameter]
+    public int BlockIndex { get; set; }
+
+    [Parameter]
+    public string? Style { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? Id { get; set; }
+
+    [Parameter]
+    public EventCallback<IAddress> OnEditAddress { get; set; }
+
+    protected override Task OnParametersSetAsync()
+    {
+        if (Road != null)
+        {
+            switch (Road.RoadScope)
+            {
+                case RoadScope.Week:
+                    measurement = 1;
+                    break;
+                case RoadScope.Month:
+                    measurement = 4;
+                    break;
+                case RoadScope.Year:
+                    measurement = 30;
+                    break;
+                default:
+                    measurement = 24;
+                    break;
+            }
+        }
+
+        return base.OnParametersSetAsync();
+    }
+
+    private string GetRoadDatePart()
+    {
+        DateTime resultingDateTime = GetBlockTime();
+
+        // Convert the result of the point in time to a string.
+        switch (Road?.RoadScope)
+        {
+            case RoadScope.Day:
+                return resultingDateTime.ToString("t");
+            case RoadScope.Week:
+                return resultingDateTime.ToString("MMM dd, yyyy");
+            case RoadScope.Month:
+                return resultingDateTime.ToString("MMM dd, yyyy");
+            case RoadScope.Year:
+                return resultingDateTime.ToString("MMM yyyy");
+            default:
+                return string.Empty;
+        }
+    }
+
+    private DateTime GetBlockTime()
+    {
+        if (Road is null)
+        {
+            return DateTime.Now;
+        }
+
+        if (!Road.StartTime.HasValue)
+        {
+            return DateTime.Now;
+        }
+
+        DateTime startDate = Road?.StartTime.Value ?? DateTime.Now;
+        DateTime resultingDateTime = startDate.AddHours(BlockIndex);
+
+        // Convert block index to a point in time.
+        switch (Road?.RoadScope)
+        {
+            case RoadScope.Week:
+            case RoadScope.Month:
+            case RoadScope.Year:
+                resultingDateTime = startDate.AddDays(BlockIndex);
+                break;
+        }
+
+        return resultingDateTime;
+    }
+
+    private bool ShouldRenderTimeSeparator()
+    {
+        return BlockIndex == 0
+        || BlockIndex == Road.Duration;
+    }
+
+    private IEnumerable<IAddress> GetAddresses()
+    {
+        if (Road is null)
+        {
+            return Enumerable.Empty<IAddress>();
+        }
+
+        if (!Road.StartTime.HasValue)
+        {
+            return Enumerable.Empty<IAddress>();
+        }
+
+        DateTime blockRange = Road.RoadScope == RoadScope.Day
+            ? Road.StartTime.Value.AddHours(BlockIndex)
+            : Road.StartTime.Value.AddDays(BlockIndex);
+
+        if (blockRange > Road.EndTime)
+        {
+            return Enumerable.Empty<IAddress>();
+        }
+
+        var locations = Road.Addresses
+            .Where(x => x.Location != null)
+            .Where(x => !x.DelayRelease || (x.DelayRelease && x.Location < DateTime.Now))
+            .Where(x => x.Location <= blockRange.AddHours(24).AddSeconds(-1) && x.Location >= blockRange)
+            .OrderBy(x => x.Location);
+
+        return locations;
+    }
+}

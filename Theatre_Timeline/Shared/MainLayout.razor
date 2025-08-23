@@ -1,0 +1,49 @@
+﻿@namespace Theatre_TimeLine.Shared
+
+@inherits LayoutComponentBase
+
+<PageTitle>Theatre_TimeLine</PageTitle>
+
+<MudThemeProvider/>
+<MudPopoverProvider/>
+<MudDialogProvider/>
+<MudSnackbarProvider/>
+
+
+<div class="page">
+    @if (showNavMenu)
+    {
+        <div class="sidebar">
+            <NavMenu />
+        </div>
+    }
+
+    <main>
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+@code {
+    private bool showNavMenu = false;
+
+    [Inject]
+    private IJSRuntime JS { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Register JS event listener for toggling nav menu
+            await JS.InvokeVoidAsync("registerNavMenuToggle", DotNetObjectReference.Create(this));
+        }
+    }
+
+    [JSInvokable]
+    public void ToggleNavMenu()
+    {
+        showNavMenu = !showNavMenu;
+        StateHasChanged();
+    }
+}
