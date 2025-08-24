@@ -153,14 +153,34 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration cfg) =>
+// Diagnostic middleware: log every /.well-known request early
+app.Use(async (ctx, next) =>
 {
-    var clientId = cfg["AzureAd:ClientId"];
-    if (string.IsNullOrWhiteSpace(clientId))
+    if (ctx.Request.Path.StartsWithSegments("/.well-known"))
     {
-        // Log and return 500 with context
-        return Results.Problem("AzureAd:ClientId missing");
+        var lf = ctx.RequestServices.GetRequiredService<ILoggerFactory>();
+        lf.CreateLogger("WellKnownTrace")
+          .LogInformation("Inbound .well-known request. PhysicalFileExists={Exists} Path={Path}",
+              System.IO.File.Exists(
+                  System.IO.Path.Combine(app.Environment.WebRootPath,
+                      ctx.Request.Path.Value!.TrimStart('/').Replace('/', System.IO.Path.DirectorySeparatorChar)))
+              ctx.Request.Path);
     }
+    await next();
+});
+
+app.MapGet("/.well-known/microsoft-identity-association.json", (ILoggerFactory lf, IConfiguration cfg) =>
+{
+    var log = lf.CreateLogger("WellKnown");
+    var clientId = cfg["AzureAd:ClientId"];
+
+    if (string.IsNullOrWhiteSpace(clientId) || clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase))
+    {
+        log.LogWarning("ClientId missing or placeholder in production config. Returning 404.");
+        return Results.NotFound(new { error = "not-configured" });
+    }
+
+    log.LogInformation("Serving well-known for ClientId {ClientId}", clientId);
 
     return Results.Json(new
     {
@@ -169,8 +189,22 @@ app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration c
             new { applicationId = clientId }
         }
     });
-})
-.AllowAnonymous();
+}).AllowAnonymous();
+
+// Diagnostic endpoint to confirm runtime view of config & FS
+app.MapGet("/diag/wellknown", (IConfiguration cfg) =>
+{
+    var clientId = cfg["AzureAd:ClientId"] ?? "<null>";
+    var webRoot = Directory.GetCurrentDirectory();
+    var fullPath = Path.Combine(webRoot, "wwwroot", ".well-known", "microsoft-identity-association.json");
+    return Results.Ok(new
+    {
+        clientId,
+        clientIdIsPlaceholder = clientId.StartsWith("b68fde3f-a1db-438c-b39c-10b92f2b99ed", StringComparison.OrdinalIgnoreCase),
+        physicalFileExists = System.IO.File.Exists(fullPath),
+        fullPath
+    });
+}).AllowAnonymous();
 
 app.MapControllers();
 
