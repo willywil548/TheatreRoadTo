@@ -185,7 +185,7 @@ app.MapGet("/.well-known/microsoft-identity-association.json", (ILoggerFactory l
         return Results.NotFound(new { error = "not-configured" });
     }
 
-    log.LogInformation("Serving well-known for ClientId {ClientId}", clientId);
+    log.LogInformation("Serving well-known for ClientId {ClientId}", SanitizeForLog(clientId));
 
     return Results.Json(new
     {
@@ -240,5 +240,22 @@ static string SanitizePath(PathString path)
     }
     var sanitized = new string(buffer.Slice(0, idx));
     if (sanitized.Length < value.Length) sanitized += "...";
+    return sanitized;
+}
+
+// Helper to sanitize arbitrary strings for logging (removes control chars, truncates)
+static string SanitizeForLog(string input)
+{
+    if (string.IsNullOrEmpty(input)) return string.Empty;
+    Span<char> buffer = stackalloc char[input.Length];
+    int idx = 0;
+    foreach (var ch in input)
+    {
+        if (ch < 0x20) continue; // skip control chars (inc. CR/LF)
+        buffer[idx++] = ch;
+        if (idx >= 128) break; // limit length if needed
+    }
+    var sanitized = new string(buffer.Slice(0, idx));
+    if (sanitized.Length < input.Length) sanitized += "...";
     return sanitized;
 }
