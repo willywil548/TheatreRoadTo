@@ -153,14 +153,39 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration cfg) =>
+// Diagnostic middleware: log every /.well-known request early
+app.Use(async (ctx, next) =>
 {
-    var clientId = cfg["AzureAd:ClientId"];
-    if (string.IsNullOrWhiteSpace(clientId))
+    if (ctx.Request.Path.StartsWithSegments("/.well-known"))
     {
-        // Log and return 500 with context
-        return Results.Problem("AzureAd:ClientId missing");
+        var rawPath = ctx.Request.Path;
+        var safePath = SanitizePath(rawPath);
+
+        // Build a physical path candidate safely
+        var relative = (rawPath.Value ?? string.Empty).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        var physicalCandidate = Path.Combine(app.Environment.WebRootPath, relative);
+        bool exists = File.Exists(physicalCandidate);
+
+        var lf = ctx.RequestServices.GetRequiredService<ILoggerFactory>();
+        lf.CreateLogger("WellKnownTrace")
+          .LogInformation("Inbound .well-known request. PhysicalFileExists={PhysicalFileExists} Path={Path}", exists, safePath);
     }
+
+    await next();
+});
+
+app.MapGet("/.well-known/microsoft-identity-association.json", (ILoggerFactory lf, IConfiguration cfg) =>
+{
+    var log = lf.CreateLogger("WellKnown");
+    var clientId = cfg["AzureAd:ClientId"];
+
+    if (string.IsNullOrWhiteSpace(clientId) || clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase))
+    {
+        log.LogWarning("ClientId missing or placeholder in production config. Returning 404.");
+        return Results.NotFound(new { error = "not-configured" });
+    }
+
+    log.LogInformation("Serving well-known for ClientId {ClientId}", SanitizeForLog(clientId));
 
     return Results.Json(new
     {
@@ -169,8 +194,25 @@ app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration c
             new { applicationId = clientId }
         }
     });
-})
-.AllowAnonymous();
+}).AllowAnonymous();
+
+if (app.Environment.IsDevelopment())
+{
+    // Diagnostic endpoint to confirm runtime view of config & FS
+    var webRootPath = app.Environment.WebRootPath;
+    app.MapGet("/diag/wellknown", (IConfiguration cfg) =>
+    {
+        var clientId = cfg["AzureAd:ClientId"] ?? "<null>";
+        var fullPath = Path.Combine(webRootPath, ".well-known", "microsoft-identity-association.json");
+        return Results.Ok(new
+        {
+            clientId,
+            clientIdIsPlaceholder = clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase),
+            physicalFileExists = System.IO.File.Exists(fullPath),
+            fullPath
+        });
+    }).AllowAnonymous();
+}
 
 app.MapControllers();
 
@@ -181,3 +223,39 @@ app.MapBlazorHub().RequireAuthorization();
 app.MapFallbackToPage("/_Host").AllowAnonymous();
 
 app.Run();
+
+// Helper to sanitize user-provided path for logging (mitigates CodeQL log injection warning)
+static string SanitizePath(PathString path)
+{
+    var value = path.Value ?? string.Empty;
+
+    // Remove control chars (including CR/LF) and limit length
+    Span<char> buffer = stackalloc char[value.Length];
+    int idx = 0;
+    foreach (var ch in value)
+    {
+        if (ch < 0x20) continue; // skip control chars
+        buffer[idx++] = ch;
+        if (idx >= 256) break;   // enforce max length
+    }
+    var sanitized = new string(buffer.Slice(0, idx));
+    if (sanitized.Length < value.Length) sanitized += "...";
+    return sanitized;
+}
+
+// Helper to sanitize arbitrary strings for logging (removes control chars, truncates)
+static string SanitizeForLog(string input)
+{
+    if (string.IsNullOrEmpty(input)) return string.Empty;
+    Span<char> buffer = stackalloc char[input.Length];
+    int idx = 0;
+    foreach (var ch in input)
+    {
+        if (ch < 0x20) continue; // skip control chars (inc. CR/LF)
+        buffer[idx++] = ch;
+        if (idx >= 128) break; // limit length if needed
+    }
+    var sanitized = new string(buffer.Slice(0, idx));
+    if (sanitized.Length < input.Length) sanitized += "...";
+    return sanitized;
+}
