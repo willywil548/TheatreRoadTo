@@ -158,14 +158,19 @@ app.Use(async (ctx, next) =>
 {
     if (ctx.Request.Path.StartsWithSegments("/.well-known"))
     {
+        var rawPath = ctx.Request.Path;
+        var safePath = SanitizePath(rawPath);
+
+        // Build a physical path candidate safely
+        var relative = (rawPath.Value ?? string.Empty).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        var physicalCandidate = Path.Combine(app.Environment.WebRootPath, relative);
+        bool exists = File.Exists(physicalCandidate);
+
         var lf = ctx.RequestServices.GetRequiredService<ILoggerFactory>();
         lf.CreateLogger("WellKnownTrace")
-          .LogInformation("Inbound .well-known request. PhysicalFileExists={Exists} Path={Path}",
-              System.IO.File.Exists(
-                  System.IO.Path.Combine(app.Environment.WebRootPath,
-                      ctx.Request.Path.Value!.TrimStart('/').Replace('/', System.IO.Path.DirectorySeparatorChar)))
-              ctx.Request.Path);
+          .LogInformation("Inbound .well-known request. PhysicalFileExists={PhysicalFileExists} Path={Path}", exists, safePath);
     }
+
     await next();
 });
 
@@ -191,20 +196,23 @@ app.MapGet("/.well-known/microsoft-identity-association.json", (ILoggerFactory l
     });
 }).AllowAnonymous();
 
-// Diagnostic endpoint to confirm runtime view of config & FS
-var webRootPath = app.Environment.WebRootPath;
-app.MapGet("/diag/wellknown", (IConfiguration cfg) =>
+if (app.Environment.IsDevelopment())
 {
-    var clientId = cfg["AzureAd:ClientId"] ?? "<null>";
-    var fullPath = Path.Combine(webRootPath, ".well-known", "microsoft-identity-association.json");
-    return Results.Ok(new
+    // Diagnostic endpoint to confirm runtime view of config & FS
+    var webRootPath = app.Environment.WebRootPath;
+    app.MapGet("/diag/wellknown", (IConfiguration cfg) =>
     {
-        clientId,
-        clientIdIsPlaceholder = clientId.StartsWith("b68fde3f-a1db-438c-b39c-10b92f2b99ed", StringComparison.OrdinalIgnoreCase),
-        physicalFileExists = System.IO.File.Exists(fullPath),
-        fullPath
-    });
-}).AllowAnonymous();
+        var clientId = cfg["AzureAd:ClientId"] ?? "<null>";
+        var fullPath = Path.Combine(webRootPath, ".well-known", "microsoft-identity-association.json");
+        return Results.Ok(new
+        {
+            clientId,
+            clientIdIsPlaceholder = clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase),
+            physicalFileExists = System.IO.File.Exists(fullPath),
+            fullPath
+        });
+    }).AllowAnonymous();
+}
 
 app.MapControllers();
 
@@ -215,3 +223,22 @@ app.MapBlazorHub().RequireAuthorization();
 app.MapFallbackToPage("/_Host").AllowAnonymous();
 
 app.Run();
+
+// Helper to sanitize user-provided path for logging (mitigates CodeQL log injection warning)
+static string SanitizePath(PathString path)
+{
+    var value = path.Value ?? string.Empty;
+
+    // Remove control chars (including CR/LF) and limit length
+    Span<char> buffer = stackalloc char[value.Length];
+    int idx = 0;
+    foreach (var ch in value)
+    {
+        if (ch < 0x20) continue; // skip control chars
+        buffer[idx++] = ch;
+        if (idx >= 256) break;   // enforce max length
+    }
+    var sanitized = new string(buffer.Slice(0, idx));
+    if (sanitized.Length < value.Length) sanitized += "...";
+    return sanitized;
+}
