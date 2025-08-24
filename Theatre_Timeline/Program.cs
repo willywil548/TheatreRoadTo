@@ -192,11 +192,11 @@ app.MapGet("/.well-known/microsoft-identity-association.json", (ILoggerFactory l
 }).AllowAnonymous();
 
 // Diagnostic endpoint to confirm runtime view of config & FS
+var webRootPath = app.Environment.WebRootPath;
 app.MapGet("/diag/wellknown", (IConfiguration cfg) =>
 {
     var clientId = cfg["AzureAd:ClientId"] ?? "<null>";
-    var webRoot = Directory.GetCurrentDirectory();
-    var fullPath = Path.Combine(webRoot, "wwwroot", ".well-known", "microsoft-identity-association.json");
+    var fullPath = Path.Combine(webRootPath, ".well-known", "microsoft-identity-association.json");
     return Results.Ok(new
     {
         clientId,
