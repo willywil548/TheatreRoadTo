@@ -153,25 +153,6 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/.well-known/microsoft-identity-association.json", (IConfiguration cfg) =>
-{
-    var clientId = cfg["AzureAd:ClientId"];
-    if (string.IsNullOrWhiteSpace(clientId))
-    {
-        // Log and return 500 with context
-        return Results.Problem("AzureAd:ClientId missing");
-    }
-
-    return Results.Json(new
-    {
-        associatedApplications = new[]
-        {
-            new { applicationId = clientId }
-        }
-    });
-})
-.AllowAnonymous();
-
 app.MapControllers();
 
 // Require auth for the Blazor Hub
@@ -181,3 +162,39 @@ app.MapBlazorHub().RequireAuthorization();
 app.MapFallbackToPage("/_Host").AllowAnonymous();
 
 app.Run();
+
+// Helper to sanitize user-provided path for logging (mitigates CodeQL log injection warning)
+static string SanitizePath(PathString path)
+{
+    var value = path.Value ?? string.Empty;
+
+    // Remove control chars (including CR/LF) and limit length
+    Span<char> buffer = stackalloc char[value.Length];
+    int idx = 0;
+    foreach (var ch in value)
+    {
+        if (ch < 0x20) continue; // skip control chars
+        buffer[idx++] = ch;
+        if (idx >= 256) break;   // enforce max length
+    }
+    var sanitized = new string(buffer.Slice(0, idx));
+    if (sanitized.Length < value.Length) sanitized += "...";
+    return sanitized;
+}
+
+// Helper to sanitize arbitrary strings for logging (removes control chars, truncates)
+static string SanitizeForLog(string input)
+{
+    if (string.IsNullOrEmpty(input)) return string.Empty;
+    Span<char> buffer = stackalloc char[input.Length];
+    int idx = 0;
+    foreach (var ch in input)
+    {
+        if (ch < 0x20) continue; // skip control chars (inc. CR/LF)
+        buffer[idx++] = ch;
+        if (idx >= 128) break; // limit length if needed
+    }
+    var sanitized = new string(buffer.Slice(0, idx));
+    if (sanitized.Length < input.Length) sanitized += "...";
+    return sanitized;
+}

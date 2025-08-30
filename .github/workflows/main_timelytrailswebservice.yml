@@ -7,6 +7,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'Theatre_Timeline/**'
   workflow_dispatch:
 
 jobs:
@@ -62,4 +64,5 @@ jobs:
           app-name: 'TimelyTrailsWebService'
           slot-name: 'Production'
           package: .
+
           
