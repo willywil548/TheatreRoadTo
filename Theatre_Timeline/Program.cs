@@ -153,67 +153,6 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Diagnostic middleware: log every /.well-known request early
-app.Use(async (ctx, next) =>
-{
-    if (ctx.Request.Path.StartsWithSegments("/.well-known"))
-    {
-        var rawPath = ctx.Request.Path;
-        var safePath = SanitizePath(rawPath);
-
-        // Build a physical path candidate safely
-        var relative = (rawPath.Value ?? string.Empty).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-        var physicalCandidate = Path.Combine(app.Environment.WebRootPath, relative);
-        bool exists = File.Exists(physicalCandidate);
-
-        var lf = ctx.RequestServices.GetRequiredService<ILoggerFactory>();
-        lf.CreateLogger("WellKnownTrace")
-          .LogInformation("Inbound .well-known request. PhysicalFileExists={PhysicalFileExists} Path={Path}", exists, safePath);
-    }
-
-    await next();
-});
-
-app.MapGet("/.well-known/microsoft-identity-association.json", (ILoggerFactory lf, IConfiguration cfg) =>
-{
-    var log = lf.CreateLogger("WellKnown");
-    var clientId = cfg["AzureAd:ClientId"];
-
-    if (string.IsNullOrWhiteSpace(clientId) || clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase))
-    {
-        log.LogWarning("ClientId missing or placeholder in production config. Returning 404.");
-        return Results.NotFound(new { error = "not-configured" });
-    }
-
-    log.LogInformation("Serving well-known for ClientId {ClientId}", SanitizeForLog(clientId));
-
-    return Results.Json(new
-    {
-        associatedApplications = new[]
-        {
-            new { applicationId = clientId }
-        }
-    });
-}).AllowAnonymous();
-
-if (app.Environment.IsDevelopment())
-{
-    // Diagnostic endpoint to confirm runtime view of config & FS
-    var webRootPath = app.Environment.WebRootPath;
-    app.MapGet("/diag/wellknown", (IConfiguration cfg) =>
-    {
-        var clientId = cfg["AzureAd:ClientId"] ?? "<null>";
-        var fullPath = Path.Combine(webRootPath, ".well-known", "microsoft-identity-association.json");
-        return Results.Ok(new
-        {
-            clientId,
-            clientIdIsPlaceholder = clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase),
-            physicalFileExists = System.IO.File.Exists(fullPath),
-            fullPath
-        });
-    }).AllowAnonymous();
-}
-
 app.MapControllers();
 
 // Require auth for the Blazor Hub
