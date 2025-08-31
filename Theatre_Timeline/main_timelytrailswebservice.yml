@@ -11,6 +11,11 @@ on:
       - 'Theatre_Timeline/**'
   workflow_dispatch:
 
+env:
+  APP_NAME: TimelyTrailsWebService
+  WELL_KNOWN_PATH: Theatre_Timeline/wwwroot/.well-known/microsoft-identity-association.json
+  PUBLISH_DIR: ${{ env.DOTNET_ROOT }}/myapp
+
 jobs:
   build:
     runs-on: windows-latest
@@ -20,43 +25,84 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Inject (or replace) the Azure AD Application (client) ID into the well-known JSON file
-      - name: Update microsoft-identity-association.json applicationId
+      - name: Verify file exists pre-transform
         shell: pwsh
         run: |
-          $file = "Theatre_Timeline/wwwroot/.well-known/microsoft-identity-association.json"
-          if (-not (Test-Path $file)) {
-            Write-Error "File not found: $file"
+          if (-not (Test-Path "$env:WELL_KNOWN_PATH")) {
+            Write-Error "Missing well-known file at $env:WELL_KNOWN_PATH"
             exit 1
           }
-          $json = Get-Content $file -Raw | ConvertFrom-Json
-          if (-not $json.associatedApplications) {
-            Write-Error "JSON does not contain 'associatedApplications' array."
-            exit 1
-          }
-            foreach ($app in $json.associatedApplications) {
-              $app.applicationId = "${{ secrets.AZUREAD_CLIENT_ID }}"
-            }
-          $json | ConvertTo-Json -Depth 5 | Set-Content $file -Encoding UTF8
-          Write-Host "Updated microsoft-identity-association.json:"
-          Get-Content $file
+          Write-Host "Pre-transform file content:"
+          Get-Content "$env:WELL_KNOWN_PATH"
 
-      - name: Set up .NET Core
+      - name: Transform microsoft-identity-association.json (inject client ID)
+        shell: pwsh
+        run: |
+          $file = "$env:WELL_KNOWN_PATH"
+          $json = Get-Content $file -Raw | ConvertFrom-Json
+          if (-not $json.associatedApplications) { Write-Error "Missing associatedApplications array"; exit 1 }
+          foreach ($app in $json.associatedApplications) {
+            $app.applicationId = "${{ secrets.AZUREAD_CLIENT_ID }}"
+          }
+          $json | ConvertTo-Json -Depth 5 | Set-Content $file -Encoding UTF8
+
+      - name: Log transformed file (redacted) + hash
+        id: transformed-log
+        shell: pwsh
+        run: |
+          $file = "$env:WELL_KNOWN_PATH"
+          $raw = Get-Content $file -Raw
+          $json = $raw | ConvertFrom-Json
+            $clientId = $json.associatedApplications[0].applicationId
+          $redacted = $clientId -replace '(^.{8}-.{4}-.{4}-.{4})-.+', '$1-REDACTED'
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash
+          Write-Host "Transformed file (raw):"
+          $raw | Write-Host
+          Write-Host "ClientId (redacted): $redacted"
+          Write-Host "SHA256 Hash: $hash"
+          "Hash=$hash" | Out-File -FilePath hash.txt -Encoding UTF8
+          echo "hash=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.x'
 
-      - name: Build with dotnet
-        run: dotnet build --configuration Release
+      - name: Build
+        run: dotnet build Theatre_Timeline/Theatre_TimeLine.csproj --configuration Release
 
-      - name: dotnet publish
-        run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
+      - name: Publish
+        run: dotnet publish Theatre_Timeline/Theatre_TimeLine.csproj -c Release -o "$env:PUBLISH_DIR"
 
-      - name: Upload artifact for deployment job
+      - name: Verify file in publish output
+        shell: pwsh
+        run: |
+          $publishedFile = Join-Path "$env:PUBLISH_DIR/wwwroot/.well-known" "microsoft-identity-association.json"
+          if (-not (Test-Path $publishedFile)) {
+            Get-ChildItem -Recurse "$env:PUBLISH_DIR/wwwroot" | Select-Object FullName | Out-String | Write-Host
+            Write-Error "File missing in publish output: $publishedFile"
+            exit 1
+          }
+          $hashPub = (Get-FileHash $publishedFile -Algorithm SHA256).Hash
+          Write-Host "Publish file hash: $hashPub"
+          if ("$hashPub" -ne "${{ steps.transformed-log.outputs.hash }}") {
+            Write-Error "Hash mismatch between transformed source and publish output."
+            exit 2
+          }
+
+      - name: Upload full app artifact
         uses: actions/upload-artifact@v4
         with:
           name: .net-app
-          path: ${{env.DOTNET_ROOT}}/myapp
+          path: ${{ env.PUBLISH_DIR }}
+
+      - name: Upload well-known file (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: well-known-json
+          path: |
+            ${{ env.WELL_KNOWN_PATH }}
+            hash.txt
 
   deploy:
     runs-on: windows-latest
@@ -66,12 +112,50 @@ jobs:
       contents: read
 
     steps:
-      - name: Download artifact from build job
+      - name: Download app artifact
         uses: actions/download-artifact@v4
         with:
           name: .net-app
 
-      - name: Login to Azure
+      - name: Compute hash from downloaded artifact
+        id: artifact-hash
+        shell: pwsh
+        run: |
+          $file = "wwwroot/.well-known/microsoft-identity-association.json"
+          if (-not (Test-Path $file)) { Write-Error "File not found in artifact: $file"; exit 1 }
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash
+          echo "hash=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "Artifact file hash: $hash"
+
+      - name: Compare build vs artifact hash
+        shell: pwsh
+        run: |
+          # Retrieve expected hash from build job by downloading the debug artifact
+          Write-Host "Downloading hash from well-known-json artifact..."
+          # Download the debug artifact
+          # (actions/download-artifact v4 cannot download multiple by default in same step; we reuse the existing name)
+          # Already only downloaded .net-app here; we re-download well-known artifact:
+          echo "Downloading well-known-json artifact"
+        # Use an extra download step because v4 restricts to one artifact per step
+      - name: Download well-known hash artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: well-known-json
+          path: well-known-debug
+
+      - name: Validate artifact hash vs build hash
+        shell: pwsh
+        run: |
+          $buildHash = (Select-String -Path "well-known-debug/hash.txt" -Pattern "^Hash=").ToString().Split('=')[1].Trim()
+          $artifactHash = "${{ steps.artifact-hash.outputs.hash }}"
+          Write-Host "Build hash:    $buildHash"
+          Write-Host "Artifact hash: $artifactHash"
+          if ($buildHash -ne $artifactHash) {
+            Write-Error "Hash mismatch between build and artifact"
+            exit 3
+          }
+
+      - name: Azure Login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_713724C6DC6E464E83E330A27AAD808C }}
@@ -82,6 +166,42 @@ jobs:
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-            app-name: 'TimelyTrailsWebService'
-            slot-name: 'Production'
-            package: .
+          app-name: ${{ env.APP_NAME }}
+          slot-name: 'Production'
+          package: .
+
+      - name: Verify remote served file matches hash (retry)
+        shell: pwsh
+        run: |
+          $expected = (Get-Content well-known-debug/hash.txt) -replace '^Hash=',''
+          $url = "https://${{ env.APP_NAME }}.azurewebsites.net/.well-known/microsoft-identity-association.json"
+          Write-Host "Fetching $url"
+          $success = $false
+          for ($i=1; $i -le 6; $i++) {
+            try {
+              $resp = Invoke-RestMethod -Uri $url -Method GET -TimeoutSec 30
+              $raw = ($resp | ConvertTo-Json -Depth 5)
+              $bytes = [System.Text.Encoding]::UTF8.GetBytes($raw)
+              $sha256 = [System.Security.Cryptography.SHA256]::Create()
+              $remoteHash = ($sha256.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ''
+              Write-Host "Attempt $i remote hash: $remoteHash"
+              if ($remoteHash -eq $expected) {
+                Write-Host "Remote file hash matches expected."
+                $success = $true
+                break
+              } else {
+                Start-Sleep -Seconds 10
+              }
+            } catch {
+              Write-Host "Attempt $i failed: $($_.Exception.Message)"
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $success) {
+            Write-Error "Remote file hash did not match expected hash ($expected)."
+            exit 4
+          }
+          # Redact client ID when logging
+          $clientId = $resp.associatedApplications[0].applicationId
+          $redacted = $clientId -replace '(^.{8}-.{4}-.{4}-.{4})-.+', '$1-REDACTED'
+          Write-Host "Remote clientId (redacted): $redacted"
