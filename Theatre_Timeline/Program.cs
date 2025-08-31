@@ -174,46 +174,6 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
-app.MapGet("/.well-known/microsoft-identity-association.json", (ILoggerFactory lf, IConfiguration cfg) =>
-{
-    var log = lf.CreateLogger("WellKnown");
-    var clientId = cfg["AzureAd:ClientId"];
-
-    if (string.IsNullOrWhiteSpace(clientId) || clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase))
-    {
-        log.LogWarning("ClientId missing or placeholder in production config. Returning 404.");
-        return Results.NotFound(new { error = "not-configured" });
-    }
-
-    log.LogInformation("Serving well-known for ClientId {ClientId}", SanitizeForLog(clientId));
-
-    return Results.Json(new
-    {
-        associatedApplications = new[]
-        {
-            new { applicationId = clientId }
-        }
-    });
-}).AllowAnonymous();
-
-if (app.Environment.IsDevelopment())
-{
-    // Diagnostic endpoint to confirm runtime view of config & FS
-    var webRootPath = app.Environment.WebRootPath;
-    app.MapGet("/diag/wellknown", (IConfiguration cfg) =>
-    {
-        var clientId = cfg["AzureAd:ClientId"] ?? "<null>";
-        var fullPath = Path.Combine(webRootPath, ".well-known", "microsoft-identity-association.json");
-        return Results.Ok(new
-        {
-            clientId,
-            clientIdIsPlaceholder = clientId.StartsWith("<your-clientid>", StringComparison.OrdinalIgnoreCase),
-            physicalFileExists = System.IO.File.Exists(fullPath),
-            fullPath
-        });
-    }).AllowAnonymous();
-}
-
 app.MapControllers();
 
 // Require auth for the Blazor Hub
