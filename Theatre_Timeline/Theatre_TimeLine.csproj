@@ -28,8 +28,9 @@
     <PackageReference Include="MudBlazor.Translations" Version="2.5.0" />
   </ItemGroup>
   <ItemGroup>
-    <Content Update="wwwroot\.well-known\microsoft-identity-association.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <Content Remove="wwwroot/.well-known/microsoft-identity-association.json" />
+    <Content Include="wwwroot/**/*.*"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
