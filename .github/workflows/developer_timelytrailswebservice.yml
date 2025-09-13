@@ -6,7 +6,7 @@ name: Build and pre-deploy to artifacts - Theatre_Timeline
 on:
   push:
     branches:
-      - devloper
+      - developer
     paths:
       - 'Theatre_Timeline/**'
   workflow_dispatch:
@@ -45,6 +45,13 @@ jobs:
           New-Item -ItemType Directory -Path $destDir -Force | Out-Null
           Copy-Item -Path $src -Destination (Join-Path $destDir 'microsoft-identity-association.json') -Force
           Write-Host "Copied to $destDir"
+          
+      - name: List publish output tree before artifact upload
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:DOTNET_ROOT 'myapp'
+          Write-Host "== Publish output tree =="
+          Get-ChildItem -Path $publishDir -Recurse -Force | Select-Object FullName,Length,LastWriteTime | Out-String -Width 200 | Write-Host
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
