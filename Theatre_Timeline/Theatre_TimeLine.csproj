@@ -33,9 +33,9 @@
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       </Content>
     </ItemGroup>
-    <Target Name="UpdateMicrosoftIdentityAssociationJson" AfterTargets="CopyFilesToOutputDirectory">
+    <Target Name="UpdateMicrosoftIdentityAssociationJson" BeforeTargets="Publish">
         <PropertyGroup>
-            <OutputJsonFile>$(TargetDir)wwwroot\.well-known\microsoft-identity-association.json</OutputJsonFile>
+            <OutputJsonFile>$(MSBuildProjectDirectory)\wwwroot\.well-known\microsoft-identity-association.json</OutputJsonFile>
             <EnvVarName>AzureAd__ClientId</EnvVarName>
         </PropertyGroup>
         <Message Text="Transforming the identity file using setting from environment: $(AzureAd__ClientId)" />
