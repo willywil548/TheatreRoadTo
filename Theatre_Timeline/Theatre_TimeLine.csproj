@@ -12,6 +12,10 @@
         <None Remove="Data\**" />
     </ItemGroup>
     <ItemGroup>
+      <None Include="..\.github\workflows\developer_timelytrailswebservice.yml" Link="developer_timelytrailswebservice.yml" />
+      <None Include="..\.github\workflows\main_timelytrailswebservice.yml" Link="main_timelytrailswebservice.yml" />
+    </ItemGroup>
+    <ItemGroup>
         <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.4.0" />
         <PackageReference Include="Azure.Identity" Version="1.15.0" />
         <PackageReference Include="Cropper.Blazor" Version="1.4.2" />
