@@ -14,3 +14,6 @@
 *.user
 /Theatre_Timeline/wwwroot/temp
 /Theatre_Timeline/Theatre_Timeline.csproj.user
+/Theatre_Timeline/Theatre_Timeline.csproj.user
+/Theatre_Timeline/Properties/PublishProfiles/FolderProfile.pubxml
+/Theatre_Timeline/wwwroot/.well-known/microsoft-identity-association.json
