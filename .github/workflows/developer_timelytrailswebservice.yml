@@ -33,19 +33,7 @@ jobs:
 
       - name: dotnet publish
         run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
-        
-      - name: Copy microsoft-identity-association.json to publish output
-        shell: pwsh
-        run: |
-          $src = Join-Path $env:GITHUB_WORKSPACE 'Theatre_Timeline\wwwroot\.well-known\microsoft-identity-association.json'
-          $destDir = Join-Path $env:DOTNET_ROOT 'myapp\wwwroot\.well-known'
-          if (!(Test-Path $src)) {
-            Write-Error "Source file not found: $src"
-          }
-          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-          Copy-Item -Path $src -Destination (Join-Path $destDir 'microsoft-identity-association.json') -Force
-          Write-Host "Copied to $destDir"
-          
+
       - name: List publish output tree before artifact upload
         shell: pwsh
         run: |
@@ -60,4 +48,4 @@ jobs:
           include-hidden-files: true
           path: ${{env.DOTNET_ROOT}}/myapp/
 
-          
+
