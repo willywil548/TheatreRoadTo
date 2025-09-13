@@ -11,6 +11,9 @@ on:
       - 'Theatre_Timeline/**'
   workflow_dispatch:
 
+env:
+  AzureAd__ClientId: ${{ secrets.AzureAd__ClientId }}
+
 jobs:
   build:
     runs-on: windows-latest
@@ -30,6 +33,13 @@ jobs:
 
       - name: dotnet publish
         run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
+
+      - name: List publish output tree before artifact upload
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:DOTNET_ROOT 'myapp'
+          Write-Host "== Publish output tree =="
+          Get-ChildItem -Path $publishDir -Recurse -Force | Select-Object FullName,Length,LastWriteTime | Out-String -Width 200 | Write-Host
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -65,4 +75,5 @@ jobs:
           app-name: 'TimelyTrailsWebService'
           slot-name: 'Production'
           package: .
+
 
