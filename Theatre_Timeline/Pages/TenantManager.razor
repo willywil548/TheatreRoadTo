@@ -1,5 +1,4 @@
 @using System.Security.Claims
-@using MudBlazor
 @using Theatre_TimeLine.Components
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
@@ -22,7 +21,7 @@
          style="fixed;"
          AriaLabel="Open user menu">
     <MudMenuItem Label="Create Tenant" Disabled="@(!_canCreateTenant)" OnClick="CreateTenant" />
-    <MudMenuItem Label="Logout" />
+    <MudMenuItem Label="Logout" OnClick="Logout" />
 </MudMenu>
 
 <MudPaper Elevation="0" Style="overflow:auto; position:relative; min-height:75vh" Square="true">
@@ -59,12 +58,10 @@
     {
         await base.OnInitializedAsync();
         user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-
-        // Only Roads-Admin (Global Admins) can create tenants
-        var email = user?.FindFirst("preferred_username")?.Value ?? user?.Identity?.Name ?? string.Empty;
-        _canCreateTenant = !string.IsNullOrWhiteSpace(email)
-            && await SecurityGroupService.IsUserInGroupAsync(email, SecurityGroupNameBuilder.GlobalAdminsGroup);
     }
+
+    private void Logout()
+        => NavigationManager.NavigateTo("MicrosoftIdentity/Account/SignOut", forceLoad: true);
 
     public void CreateRoad(ITenantContainer tenantContainer)
     {
