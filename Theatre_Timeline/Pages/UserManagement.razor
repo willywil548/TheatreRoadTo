@@ -1,0 +1,124 @@
+@using System.Security.Claims
+@using MudBlazor
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Services
+@using Theatre_TimeLine.Components
+@inject ITenantManagerService TenantManagerService
+@inject ISecurityGroupService SecurityGroupService
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@attribute [Authorize]
+@page "/UserManagement/{Tenant?}"
+
+<MudPaper Elevation="0" Class="pa-4">
+
+    <MudText Typo="Typo.h5">User Management</MudText>
+    <MudDivider Class="my-2" />
+
+    <MudGrid Class="my-2">
+        <MudItem xs="12" sm="6" md="4">
+            <MudSelect T="Guid?" Label="Select Tenant" @bind-Value="SelectedTenantId" Clearable="true" Dense="true" AnchorOrigin="Origin.BottomCenter" OffsetY="true">
+                @foreach (var t in _tenants)
+                {
+                    <MudSelectItem T="Guid?" Value="@(t.TenantId)">@t.TenantName (@t.TenantId)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_selectedTenantId.HasValue)" OnClick="EnsureTenantGroups">
+                Ensure Tenant Groups
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_selectedTenant != null)
+    {
+        <TenantUserManagement TenantContainer="@_selectedTenant" />
+    }
+
+    @if (_selectedTenant != null)
+    {
+        <MudExpansionPanel Text="Road Groups">
+            <MudTable T="IRoadToThere" Items="@_selectedTenant.Roads" Hover="true" Dense="true" >
+                <HeaderContent>
+                    <MudTh>Road</MudTh>
+                    <MudTh>Road Id</MudTh>
+                    <MudTh>Group</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Title</MudTd>
+                    <MudTd>@context.RoadId</MudTd>
+                    <MudTd>@SecurityGroupNameBuilder.TenantRoadUser(_selectedTenant!.TenantId, context.RoadId)</MudTd>
+                    <MudTd>
+                        <MudButton Variant="Variant.Text" OnClick="@(async () => await EnsureRoadGroup(context.RoadId))">Create</MudButton>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudExpansionPanel>
+    }
+</MudPaper>
+
+@code
+{
+    [Parameter] public string? Tenant { get; set; }
+
+    private ClaimsPrincipal? _currentUser;
+    private ITenantContainer[] _tenants = Array.Empty<ITenantContainer>();
+    private ITenantContainer? _selectedTenant;
+    private Guid? _selectedTenantId;
+
+    // Bindable property that refreshes tenant selection on change
+    private Guid? SelectedTenantId
+    {
+        get => _selectedTenantId;
+        set
+        {
+            if (_selectedTenantId == value) return;
+            _selectedTenantId = value;
+            _ = RefreshSelection();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentUser = (await AuthState.GetAuthenticationStateAsync()).User;
+        _tenants = TenantManagerService.GetTenants();
+
+        if (Guid.TryParse(Tenant, out var tid))
+        {
+            _selectedTenantId = tid;
+        }
+
+        await RefreshSelection();
+    }
+
+    private async Task RefreshSelection()
+    {
+        _selectedTenant = _selectedTenantId.HasValue ? TenantManagerService.GetTenant(_selectedTenantId.Value) : null;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private async Task EnsureTenantGroups()
+    {
+        if (_selectedTenant == null) return;
+
+        var managerGroup = SecurityGroupNameBuilder.TenantManager(_selectedTenant.TenantId);
+        var userGroup = SecurityGroupNameBuilder.TenantUser(_selectedTenant.TenantId);
+
+        await SecurityGroupService.EnsureGroupAsync(managerGroup);
+        await SecurityGroupService.EnsureGroupAsync(userGroup);
+        Snackbar.Add("Tenant groups ensured.", Severity.Success);
+    }
+
+    private async Task EnsureRoadGroup(Guid roadId)
+    {
+        if (_selectedTenant == null) return;
+        var name = SecurityGroupNameBuilder.TenantRoadUser(_selectedTenant.TenantId, roadId);
+        await SecurityGroupService.EnsureGroupAsync(name);
+        Snackbar.Add($"Ensured {name}", Severity.Success);
+    }
+}

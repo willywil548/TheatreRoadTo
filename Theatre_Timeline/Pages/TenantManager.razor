@@ -35,6 +35,8 @@
                                          OnSaveRoad="SaveRoad"
                                          OnRemoveRoad="RemoveRoad"
                                          OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
+                    <MudDivider Class="my-2" />
+                    <TenantUserManagement TenantContainer="@container" />
                 </MudExpansionPanel>
 
                 <br />

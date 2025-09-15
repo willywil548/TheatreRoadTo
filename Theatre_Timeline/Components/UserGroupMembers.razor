@@ -1,0 +1,51 @@
+@namespace Theatre_TimeLine.Components
+@using MudBlazor
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Services
+@inject ISecurityGroupService SecurityGroupService
+@inject ISnackbar Snackbar
+
+<MudList T="string" Dense="true">
+    @if (_members.Count == 0)
+    {
+        <MudListItem Disabled="true"><MudText>No members</MudText></MudListItem>
+    }
+    else
+    {
+        @foreach (var m in _members)
+        {
+            <MudListItem>
+                <MudText>@(m.DisplayName ?? m.Email)</MudText>
+                <MudText Class="ml-2" Typo="Typo.caption">@m.Email</MudText>
+                <MudSpacer />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Color="Color.Error"
+                               Size="Size.Small"
+                               OnClick="@(() => Remove(m))" />
+            </MudListItem>
+        }
+    }
+</MudList>
+
+@code {
+    [Parameter] public string GroupName { get; set; } = string.Empty;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private IReadOnlyList<AppUser> _members = Array.Empty<AppUser>();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
+    }
+
+    private async Task Remove(AppUser user)
+    {
+        await SecurityGroupService.RemoveUserFromGroupAsync(user.Email, GroupName);
+        Snackbar.Add($"Removed {user.Email} from {GroupName}", Severity.Info);
+        _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
+        StateHasChanged();
+
+        if (OnChanged.HasDelegate)
+            await OnChanged.InvokeAsync();
+    }
+}
