@@ -6,6 +6,8 @@
 @inject ITenantManagerService TenantManagerService
 @inject NavigationManager NavigationManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISecurityGroupService SecurityGroupService
+@inject ISnackbar Snackbar
 @implements IRoadToThereManager
 @attribute [Authorize]
 @page "/TenantManagement/{Tenant?}"
@@ -18,9 +20,8 @@
 <MudMenu Icon="@Icons.Material.Filled.MoreVert"
          style="fixed;"
          AriaLabel="Open user menu">
-    <MudMenuItem Label="Create Tenant" OnClick="CreateTenant" />
-    <MudMenuItem Label="My account" />
-    <MudMenuItem Label="Logout" />
+    <MudMenuItem Label="Create Tenant" Disabled="@(!_canCreateTenant)" OnClick="CreateTenant" />
+    <MudMenuItem Label="Logout" OnClick="Logout" />
 </MudMenu>
 
 <MudPaper Elevation="0" Style="overflow:auto; position:relative; min-height:75vh" Square="true">
@@ -35,6 +36,8 @@
                                          OnSaveRoad="SaveRoad"
                                          OnRemoveRoad="RemoveRoad"
                                          OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
+                    <MudDivider Class="my-2" />
+                    <TenantUserManagement TenantContainer="@container" />
                 </MudExpansionPanel>
 
                 <br />
@@ -46,6 +49,7 @@
 @code {
     private bool _drawerOpen = true;
     private ClaimsPrincipal? user;
+    private bool _canCreateTenant;
 
     [Parameter]
     public string? Tenant { get; set; }  = string.Empty;
@@ -55,6 +59,9 @@
         await base.OnInitializedAsync();
         user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
     }
+
+    private void Logout()
+        => NavigationManager.NavigateTo("MicrosoftIdentity/Account/SignOut", forceLoad: true);
 
     public void CreateRoad(ITenantContainer tenantContainer)
     {
@@ -96,6 +103,12 @@
 
     private void CreateTenant()
     {
+        if (!_canCreateTenant)
+        {
+            Snackbar.Add("Only Roads-Admin can create tenants.", Severity.Warning);
+            return;
+        }
+
         TenantManagerService.CreateTenant(new TenantContainer()
             {
                 TenantId = Guid.NewGuid(),

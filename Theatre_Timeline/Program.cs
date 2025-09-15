@@ -2,6 +2,7 @@ using Azure.Identity;
 using Cropper.Blazor.Extensions;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.Azure;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
 using MudBlazor;
@@ -39,6 +40,7 @@ string? keyVaultUrl = builder.Configuration.GetValue<string>("AzureAd:ClientCert
 if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
 {
     var credential = new DefaultAzureCredential();
+    builder.Configuration["Graph:KeyVault"] = true.ToString();
     builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
 }
 
@@ -66,13 +68,7 @@ builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.Authentic
         {
             Debug.WriteLine($"OIDC AuthFailed: {ctx.Exception?.Message}");
             return Task.CompletedTask;
-        },
-        // Uncomment temporarily to force a fresh sign-in (helps with stale AAD sessions)
-        //OnRedirectToIdentityProvider = ctx =>
-        //{
-        //    ctx.ProtocolMessage.Prompt = "login";
-        //    return Task.CompletedTask;
-        //}
+        }
     };
 });
 
@@ -111,7 +107,6 @@ builder.Services.AddServerSideBlazor()
 builder.Services.AddMudServices(config =>
 {
     config.SnackbarConfiguration.PositionClass = Defaults.Classes.Position.BottomCenter;
-
     config.SnackbarConfiguration.PreventDuplicates = true;
     config.SnackbarConfiguration.NewestOnTop = false;
     config.SnackbarConfiguration.ShowCloseIcon = true;
@@ -120,6 +115,10 @@ builder.Services.AddMudServices(config =>
     config.SnackbarConfiguration.ShowTransitionDuration = 500;
     config.SnackbarConfiguration.SnackbarVariant = Variant.Filled;
 });
+
+// Add user management service (Graph if configured; stub otherwise)
+builder.Services.AddUserManagementServices(builder.Configuration);
+builder.Services.AddHostedService<SecurityGroupStartupVerifier>();
 
 // Add cropping services
 builder.Services.AddCropper();
@@ -176,6 +175,9 @@ app.Use(async (ctx, next) =>
 
 app.MapControllers();
 
+// Redirect "/" to "/home" (302). Use permanent: true for 308.
+app.MapGet("/", () => Results.Redirect("/home", permanent: false)).AllowAnonymous();
+
 // Require auth for the Blazor Hub
 app.MapBlazorHub().RequireAuthorization();
 
@@ -200,22 +202,5 @@ static string SanitizePath(PathString path)
     }
     var sanitized = new string(buffer.Slice(0, idx));
     if (sanitized.Length < value.Length) sanitized += "...";
-    return sanitized;
-}
-
-// Helper to sanitize arbitrary strings for logging (removes control chars, truncates)
-static string SanitizeForLog(string input)
-{
-    if (string.IsNullOrEmpty(input)) return string.Empty;
-    Span<char> buffer = stackalloc char[input.Length];
-    int idx = 0;
-    foreach (var ch in input)
-    {
-        if (ch < 0x20) continue; // skip control chars (inc. CR/LF)
-        buffer[idx++] = ch;
-        if (idx >= 128) break; // limit length if needed
-    }
-    var sanitized = new string(buffer.Slice(0, idx));
-    if (sanitized.Length < input.Length) sanitized += "...";
     return sanitized;
 }

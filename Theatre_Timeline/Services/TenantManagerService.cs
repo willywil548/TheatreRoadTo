@@ -15,13 +15,17 @@ namespace Theatre_TimeLine.Services
         private const string configurationKey = "TenantManager:DataPath";
         private const string tenantConfigurationFile = "TenantConfiguration.json";
         private readonly string dataPath;
+        private readonly ISecurityGroupService? _securityGroups;
 
         /// <summary>
         /// Initializes a new instance of <see cref="TenantManagerService"/>
         /// </summary>
         /// <param name="configuration"></param>
-        public TenantManagerService(IConfiguration configuration)
+        /// <param name="securityGroups">Optional: security group service to ensure groups upon tenant/road creation.</param>
+        public TenantManagerService(IConfiguration configuration, ISecurityGroupService? securityGroups = null)
         {
+            this._securityGroups = securityGroups;
+
             string? dataPath = configuration.GetValue<string>(configurationKey);
             if (string.IsNullOrEmpty(dataPath))
             {
@@ -59,6 +63,13 @@ namespace Theatre_TimeLine.Services
             tenantConfigurationFileInfo.Directory?.Create();
             string tenantConfig = JsonSerializer.Serialize(tenant);
             File.WriteAllText(tenantConfigurationFileInfo.FullName, tenantConfig);
+
+            // Optionally ensure tenant-level groups.
+            if (this._securityGroups != null)
+            {
+                _ = this._securityGroups.EnsureGroupAsync(SecurityGroupNameBuilder.TenantManager(tenant.TenantId));
+                _ = this._securityGroups.EnsureGroupAsync(SecurityGroupNameBuilder.TenantUser(tenant.TenantId));
+            }
         }
 
         public void RemoveTenant(Guid guid)
@@ -78,6 +89,12 @@ namespace Theatre_TimeLine.Services
             }
 
             this.ActionRoad(roadToThere.TenantId, tenant => tenant.SaveRoad(roadToThere));
+
+            // Optionally ensure road-level group.
+            if (this._securityGroups != null)
+            {
+                _ = this._securityGroups.EnsureGroupAsync(SecurityGroupNameBuilder.TenantRoadUser(roadToThere.TenantId, roadToThere.RoadId));
+            }
         }
 
         public void RemoveRoad(Guid roadId)
