@@ -1,0 +1,348 @@
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Services
+@using Theatre_TimeLine.Components
+@inject ISecurityGroupService SecurityGroupService
+@inject AuthenticationStateProvider Auth
+@inject ISnackbar Snackbar
+
+@if (!_canManage)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        You do not have permission to manage users for this tenant.
+    </MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-2">
+        <MudText Typo="Typo.subtitle1">User Management</MudText>
+        <MudList T="string">
+            <MudListItem>Manager Group: <b>@_managerGroup</b></MudListItem>
+            <MudListItem>User Group: <b>@_userGroup</b></MudListItem>
+            <MudListItem>Global Admins: <b>@SecurityGroupNameBuilder.GlobalAdminsGroup</b></MudListItem>
+        </MudList>
+
+        <MudGrid Class="my-2">
+            <MudItem xs="12" sm="6" md="5">
+                <MudTextField @bind-Value="_userEmail" Label="User email" Dense="true" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Label="Security level" Dense="true" @bind-Value="_selectedRole">
+                    <MudSelectItem T="string" Value="@RoleUser">User</MudSelectItem>
+                    <MudSelectItem T="string" Value="@RoleManager">Manager</MudSelectItem>
+                    <MudSelectItem T="string" Value="@RoleRoadUser">Road User</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="Guid?" Label="Road (for Road User)" Dense="true"
+                           @bind-Value="_selectedRoadId"
+                           Disabled="@IsRoadPickerDisabled">
+                    @foreach (var r in TenantContainer.Roads)
+                    {
+                        <MudSelectItem T="Guid?" Value="@r.RoadId">@r.Title</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="12" md="1" Class="d-flex align-center">
+                <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!_isApplyEnabled)"
+                           OnClick="InviteOrAdd">
+                    Apply
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        @if (_pendingInvites.Count > 0)
+        {
+            <MudExpansionPanels Elevation="0" Class="mb-2">
+                <MudExpansionPanel Text="@($"Pending Invitations ({_pendingInvites.Count})")" Expanded="true">
+                    <MudTable Items="@_pendingInvites" Dense="true">
+                        <HeaderContent>
+                            <MudTh>Email</MudTh>
+                            <MudTh>Target Group</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Attempts</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Email</MudTd>
+                            <MudTd>@context.Group</MudTd>
+                            <MudTd>@context.Status</MudTd>
+                            <MudTd>@context.Attempts</MudTd>
+                            <MudTd>
+                                <MudButton Variant="Variant.Text" OnClick="@(() => RetryInviteAsync(context))">Retry now</MudButton>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+
+        <MudExpansionPanels Elevation="0">
+            <MudExpansionPanel Text="@($"Tenant Managers ({_managerCount})")">
+                <UserGroupMembers GroupName="@_managerGroup" OnChanged="UpdateCountsAsync" />
+            </MudExpansionPanel>
+            <MudExpansionPanel Text="@($"Tenant Users ({_userCount})")">
+                <UserGroupMembers GroupName="@_userGroup" OnChanged="UpdateCountsAsync" />
+            </MudExpansionPanel>
+            <MudExpansionPanel Text="Road Groups">
+                <MudTable Items="@TenantContainer.Roads" Hover="true" Dense="true">
+                    <HeaderContent>
+                        <MudTh>Road</MudTh>
+                        <MudTh>Group</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Title</MudTd>
+                        <MudTd>@SecurityGroupNameBuilder.TenantRoadUser(TenantContainer.TenantId, context.RoadId)</MudTd>
+                        <MudTd>
+                            <MudButton Variant="Variant.Text" OnClick="@(() => EnsureRoadGroup(context.RoadId))">Create</MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    </MudPaper>
+}
+
+@code {
+    [Parameter] public required ITenantContainer TenantContainer { get; set; }
+
+    private const string RoleUser = "User";
+    private const string RoleManager = "Manager";
+    private const string RoleRoadUser = "RoadUser";
+
+    private string _managerGroup = string.Empty;
+    private string _userGroup = string.Empty;
+    private bool _canManage;
+
+    private string _userEmail = string.Empty;
+    private string _selectedRole = RoleUser;
+    private Guid? _selectedRoadId;
+
+    private int _managerCount;
+    private int _userCount;
+
+    private bool IsRoadPickerDisabled => _selectedRole != RoleRoadUser;
+
+    private bool _isApplyEnabled =>
+        !string.IsNullOrWhiteSpace(_userEmail)
+        && (_selectedRole != RoleRoadUser || _selectedRoadId.HasValue);
+
+    private readonly List<PendingInvite> _pendingInvites = new();
+    private PeriodicTimer? _invitePollTimer;
+    private CancellationTokenSource? _pollCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _managerGroup = SecurityGroupNameBuilder.TenantManager(TenantContainer.TenantId);
+        _userGroup = SecurityGroupNameBuilder.TenantUser(TenantContainer.TenantId);
+
+        // Pre-ensure groups for visibility
+        await SecurityGroupService.EnsureGroupAsync(_managerGroup);
+        await SecurityGroupService.EnsureGroupAsync(_userGroup);
+
+        // Authorization: Global Admins or Tenant Managers
+        var auth = await Auth.GetAuthenticationStateAsync();
+        var email = auth.User.FindFirst("preferred_username")?.Value ?? auth.User.Identity?.Name;
+        if (!string.IsNullOrEmpty(email))
+        {
+            _canManage =
+                await SecurityGroupService.IsUserInGroupAsync(email, SecurityGroupNameBuilder.GlobalAdminsGroup) ||
+                await SecurityGroupService.IsUserInGroupAsync(email, _managerGroup);
+        }
+
+        await UpdateCountsAsync();
+    }
+
+    private async Task UpdateCountsAsync()
+    {
+        _managerCount = (await SecurityGroupService.GetGroupMembersAsync(_managerGroup)).Count;
+        _userCount = (await SecurityGroupService.GetGroupMembersAsync(_userGroup)).Count;
+        StateHasChanged();
+    }
+
+    private async Task InviteOrAdd()
+    {
+        if (!_canManage || string.IsNullOrWhiteSpace(_userEmail)) return;
+
+        string targetGroup = _selectedRole switch
+        {
+            var r when r == RoleManager => _managerGroup,
+            var r when r == RoleUser => _userGroup,
+            var r when r == RoleRoadUser && _selectedRoadId.HasValue => SecurityGroupNameBuilder.TenantRoadUser(TenantContainer.TenantId, _selectedRoadId.Value),
+            _ => string.Empty
+        };
+        if (string.IsNullOrEmpty(targetGroup)) return;
+
+        try
+        {
+            await SecurityGroupService.EnsureGroupAsync(targetGroup);
+            var user = await SecurityGroupService.InviteUserAsync(_userEmail.Trim(), _userEmail.Trim(), new[] { targetGroup });
+
+            Snackbar.Add($"User {user.Email} added to {targetGroup}", Severity.Success);
+            await UpdateCountsAsync();
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("could not be resolved", StringComparison.OrdinalIgnoreCase))
+        {
+            // Track as pending and start polling
+            AddPendingInvite(_userEmail.Trim(), targetGroup, "Invited (awaiting directory)");
+            Snackbar.Add($"Invitation sent to {_userEmail}. Waiting for directory to reflect...", Severity.Info);
+            StartInvitePolling();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Invite failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void AddPendingInvite(string email, string group, string status)
+    {
+        if (_pendingInvites.Any(p => p.Email.Equals(email, StringComparison.OrdinalIgnoreCase) && p.Group.Equals(group, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        _pendingInvites.Add(new PendingInvite
+        {
+            Email = email,
+            Group = group,
+            Status = status,
+            CreatedUtc = DateTime.UtcNow
+        });
+        StateHasChanged();
+    }
+
+    private void StartInvitePolling()
+    {
+        if (_invitePollTimer != null) return;
+
+        _pollCts = new CancellationTokenSource();
+        _invitePollTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (await _invitePollTimer.WaitForNextTickAsync(_pollCts.Token))
+                {
+                    if (_pendingInvites.Count == 0)
+                    {
+                        StopInvitePolling();
+                        break;
+                    }
+
+                    foreach (var p in _pendingInvites.ToList())
+                    {
+                        p.Attempts++;
+                        p.Status = "Checking...";
+                        var matches = await SecurityGroupService.SearchUsersAsync(p.Email);
+                        var found = matches.FirstOrDefault(m =>
+                            m.Email.Equals(p.Email, StringComparison.OrdinalIgnoreCase) ||
+                            m.DisplayName?.Equals(p.Email, StringComparison.OrdinalIgnoreCase) == true);
+
+                        if (found != null)
+                        {
+                            // Ensure membership (idempotent)
+                            await SecurityGroupService.AddUserToGroupAsync(p.Email, p.Group);
+                            _pendingInvites.Remove(p);
+                            Snackbar.Add($"Invite completed: {p.Email} added to {p.Group}", Severity.Success);
+                            await UpdateCountsAsync();
+                        }
+                        else
+                        {
+                            p.Status = "Waiting...";
+                        }
+                    }
+
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch (OperationCanceledException) { /* ignore */ }
+            finally
+            {
+                StopInvitePolling();
+            }
+        });
+    }
+
+    private void StopInvitePolling()
+    {
+        _pollCts?.Cancel();
+        _invitePollTimer?.Dispose();
+        _pollCts?.Dispose();
+        _invitePollTimer = null;
+        _pollCts = null;
+    }
+
+    private async Task RetryInviteAsync(PendingInvite p)
+    {
+        // Force an immediate check
+        var matches = await SecurityGroupService.SearchUsersAsync(p.Email);
+        var found = matches.FirstOrDefault(m =>
+            m.Email.Equals(p.Email, StringComparison.OrdinalIgnoreCase) ||
+            m.DisplayName?.Equals(p.Email, StringComparison.OrdinalIgnoreCase) == true);
+
+        if (found != null)
+        {
+            await SecurityGroupService.AddUserToGroupAsync(p.Email, p.Group);
+            _pendingInvites.Remove(p);
+            Snackbar.Add($"Invite completed: {p.Email} added to {p.Group}", Severity.Success);
+            await UpdateCountsAsync();
+        }
+        else
+        {
+            p.Attempts++;
+            p.Status = "Waiting...";
+            StateHasChanged();
+        }
+    }
+
+    private async Task EnsureRoadGroup(Guid roadId)
+    {
+        var name = SecurityGroupNameBuilder.TenantRoadUser(TenantContainer.TenantId, roadId);
+        await SecurityGroupService.EnsureGroupAsync(name);
+        Snackbar.Add($"Ensured {name}", Severity.Success);
+    }
+
+    private sealed class PendingInvite
+    {
+        public string Email { get; set; } = string.Empty;
+        public string Group { get; set; } = string.Empty;
+        public string Status { get; set; } = "Pending";
+        public int Attempts { get; set; }
+        public DateTime CreatedUtc { get; set; }
+    }
+
+    // Nested: list members and remove
+    public sealed partial class UserGroupMembers : ComponentBase
+    {
+        [Inject] private ISecurityGroupService SecurityGroupService { get; set; } = default!;
+        [Inject] private ISnackbar Snackbar { get; set; } = default!;
+        [Parameter] public string GroupName { get; set; } = string.Empty;
+        [Parameter] public EventCallback OnChanged { get; set; }
+
+        private IReadOnlyList<AppUser> _members = Array.Empty<AppUser>();
+
+        protected override async Task OnParametersSetAsync()
+        {
+            _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
+        }
+
+        public async Task RefreshAsync()
+        {
+            _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task Remove(AppUser user)
+        {
+            await SecurityGroupService.RemoveUserFromGroupAsync(user.Email, GroupName);
+            Snackbar.Add($"Removed {user.Email} from {GroupName}", Severity.Info);
+            _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
+            StateHasChanged();
+
+            if (OnChanged.HasDelegate)
+                await OnChanged.InvokeAsync();
+        }
+    }
+}
