@@ -1,4 +1,5 @@
 @using System.Security.Claims
+@using MudBlazor
 @using Theatre_TimeLine.Components
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
@@ -6,6 +7,8 @@
 @inject ITenantManagerService TenantManagerService
 @inject NavigationManager NavigationManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISecurityGroupService SecurityGroupService
+@inject ISnackbar Snackbar
 @implements IRoadToThereManager
 @attribute [Authorize]
 @page "/TenantManagement/{Tenant?}"
@@ -18,8 +21,7 @@
 <MudMenu Icon="@Icons.Material.Filled.MoreVert"
          style="fixed;"
          AriaLabel="Open user menu">
-    <MudMenuItem Label="Create Tenant" OnClick="CreateTenant" />
-    <MudMenuItem Label="My account" />
+    <MudMenuItem Label="Create Tenant" Disabled="@(!_canCreateTenant)" OnClick="CreateTenant" />
     <MudMenuItem Label="Logout" />
 </MudMenu>
 
@@ -48,6 +50,7 @@
 @code {
     private bool _drawerOpen = true;
     private ClaimsPrincipal? user;
+    private bool _canCreateTenant;
 
     [Parameter]
     public string? Tenant { get; set; }  = string.Empty;
@@ -56,6 +59,11 @@
     {
         await base.OnInitializedAsync();
         user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+
+        // Only Roads-Admin (Global Admins) can create tenants
+        var email = user?.FindFirst("preferred_username")?.Value ?? user?.Identity?.Name ?? string.Empty;
+        _canCreateTenant = !string.IsNullOrWhiteSpace(email)
+            && await SecurityGroupService.IsUserInGroupAsync(email, SecurityGroupNameBuilder.GlobalAdminsGroup);
     }
 
     public void CreateRoad(ITenantContainer tenantContainer)
@@ -98,6 +106,12 @@
 
     private void CreateTenant()
     {
+        if (!_canCreateTenant)
+        {
+            Snackbar.Add("Only Roads-Admin can create tenants.", Severity.Warning);
+            return;
+        }
+
         TenantManagerService.CreateTenant(new TenantContainer()
             {
                 TenantId = Guid.NewGuid(),

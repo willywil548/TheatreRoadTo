@@ -12,7 +12,7 @@
 
 <div class="@NavMenuCssClass" @onclick="ToggleNavMenu">
     <MudNavMenu>
-        <MudNavLink class="nav-link" href="" Match="NavLinkMatch.All">
+        <MudNavLink class="nav-link" href="home" Match="NavLinkMatch.All">
             <span class="oi oi-home" aria-hidden="true"></span> Home
         </MudNavLink>
         <MudNavLink class="nav-link" href="TenantManagement">
@@ -26,9 +26,7 @@
 
 @code {
     private static readonly string defaultRoad = $"RoadToThere/{TenantManagerService.DemoGuid}";
-
     private bool collapseNavMenu = false;
-
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 
     private void ToggleNavMenu()
