@@ -4,18 +4,38 @@ using Theatre_TimeLine.Contracts;
 
 namespace Theatre_TimeLine.Services
 {
+    /// <summary>
+    /// Microsoft Graph-based implementation of <see cref="ISecurityGroupService"/>.
+    /// Provides CRUD-lite operations for security groups and memberships, user lookup, and guest invitation.
+    /// </summary>
+    /// <remarks>
+    /// Notes:
+    /// - Uses application permissions via <see cref="GraphServiceClient"/>.
+    /// - Some Graph endpoints are eventually consistent (e.g., invitations); short delays may be observed.
+    /// - Group mail nicknames are sanitized to comply with Graph constraints.
+    /// </remarks>
     internal sealed class GraphSecurityGroupService : ISecurityGroupService
     {
         private readonly GraphServiceClient _graph;
         private readonly string _inviteRedirectUrl;
         private readonly Dictionary<string, string> _groupIdByName = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Initializes a new instance of <see cref="GraphSecurityGroupService"/>.
+        /// </summary>
+        /// <param name="graph">An authenticated <see cref="GraphServiceClient"/> (app-only).</param>
+        /// <param name="config">Application configuration used for invite settings.</param>
         public GraphSecurityGroupService(GraphServiceClient graph, IConfiguration config)
         {
             _graph = graph;
             _inviteRedirectUrl = config["Graph:InviteRedirectUrl"] ?? "https://localhost/";
         }
 
+        /// <summary>
+        /// Gets all application-scoped security groups (filtered by the app prefix).
+        /// </summary>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Readonly collection of groups with member counts.</returns>
         public async Task<IReadOnlyList<SecurityGroup>> ListGroupsAsync(CancellationToken ct = default)
         {
             var resp = await _graph.Groups.GetAsync(cfg =>
@@ -36,6 +56,12 @@ namespace Theatre_TimeLine.Services
             return result;
         }
 
+        /// <summary>
+        /// Gets a group by display name.
+        /// </summary>
+        /// <param name="groupName">Display name of the group.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Group info or null if not found.</returns>
         public async Task<SecurityGroup?> GetGroupByNameAsync(string groupName, CancellationToken ct = default)
         {
             var g = await FindGroupByNameAsync(groupName, ct);
@@ -44,6 +70,13 @@ namespace Theatre_TimeLine.Services
             return new SecurityGroup { Id = g.Id!, Name = g.DisplayName ?? string.Empty, Description = g.Description, MemberCount = count };
         }
 
+        /// <summary>
+        /// Ensures a security group exists by name; creates it if missing.
+        /// </summary>
+        /// <param name="groupName">Display name of the group to ensure.</param>
+        /// <param name="description">Optional group description.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The ensured group metadata.</returns>
         public async Task<SecurityGroup> EnsureGroupAsync(string groupName, string? description = null, CancellationToken ct = default)
         {
             var existing = await FindGroupByNameAsync(groupName, ct);
@@ -77,6 +110,9 @@ namespace Theatre_TimeLine.Services
             return new SecurityGroup { Id = created.Id!, Name = created.DisplayName ?? groupName, Description = created.Description, MemberCount = 0 };
         }
 
+        /// <summary>
+        /// Sanitizes the description to remove control characters and limit length.
+        /// </summary>
         private static string? SanitizeDescription(string? description)
         {
             if (string.IsNullOrWhiteSpace(description)) return null;
@@ -88,6 +124,11 @@ namespace Theatre_TimeLine.Services
             return string.IsNullOrWhiteSpace(clean) ? null : clean;
         }
 
+        /// <summary>
+        /// Deletes a group (if it exists) by its display name.
+        /// </summary>
+        /// <param name="groupName">Display name of the group to delete.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task DeleteGroupByNameAsync(string groupName, CancellationToken ct = default)
         {
             var id = await ResolveGroupIdByName(groupName, ct);
@@ -96,6 +137,12 @@ namespace Theatre_TimeLine.Services
             _groupIdByName.Remove(groupName);
         }
 
+        /// <summary>
+        /// Searches users by email/UPN prefix (case-insensitive).
+        /// </summary>
+        /// <param name="query">Prefix of mail, UPN, or otherMails.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Matching users (best-effort mapped email/display name).</returns>
         public async Task<IReadOnlyList<AppUser>> SearchUsersAsync(string query, CancellationToken ct = default)
         {
             var resp = await _graph.Users.GetAsync(cfg =>
@@ -108,6 +155,15 @@ namespace Theatre_TimeLine.Services
             return (resp?.Value ?? new List<User>()).Select(ToAppUser).ToList();
         }
 
+        /// <summary>
+        /// Invites a user by email if they do not exist and optionally adds them to groups.
+        /// </summary>
+        /// <param name="email">User email address.</param>
+        /// <param name="displayName">Optional display name for the invite.</param>
+        /// <param name="groups">Optional list of group display names to add after invite/resolve.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The invited or existing user.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if the user cannot be resolved after invitation.</exception>
         public async Task<AppUser> InviteUserAsync(string email, string? displayName, IEnumerable<string>? groups = null, CancellationToken ct = default)
         {
             var user = await ResolveUserByEmailAsync(email, ct);
@@ -138,6 +194,12 @@ namespace Theatre_TimeLine.Services
             return user;
         }
 
+        /// <summary>
+        /// Adds a user to a group by email and group display name (ensures the group exists).
+        /// </summary>
+        /// <param name="userEmail">Email of the user to add.</param>
+        /// <param name="groupName">Display name of the target group.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task AddUserToGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
             var groupId = await ResolveGroupIdByName(groupName, ct) ?? (await EnsureGroupAsync(groupName, ct: ct)).Id;
@@ -150,6 +212,12 @@ namespace Theatre_TimeLine.Services
             }, requestConfiguration: null, cancellationToken: ct);
         }
 
+        /// <summary>
+        /// Removes a user from a group by email and group display name.
+        /// </summary>
+        /// <param name="userEmail">Email of the user to remove.</param>
+        /// <param name="groupName">Display name of the target group.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task RemoveUserFromGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
             var groupId = await ResolveGroupIdByName(groupName, ct);
@@ -161,6 +229,12 @@ namespace Theatre_TimeLine.Services
             await _graph.Groups[groupId].Members[user.Id].Ref.DeleteAsync(requestConfiguration: null, cancellationToken: ct);
         }
 
+        /// <summary>
+        /// Retrieves all user members of a group by its display name.
+        /// </summary>
+        /// <param name="groupName">Display name of the group.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Readonly list of users in the group.</returns>
         public async Task<IReadOnlyList<AppUser>> GetGroupMembersAsync(string groupName, CancellationToken ct = default)
         {
             var groupId = await ResolveGroupIdByName(groupName, ct);
@@ -194,6 +268,13 @@ namespace Theatre_TimeLine.Services
             return result;
         }
 
+        /// <summary>
+        /// Checks whether a user is a member of the given group.
+        /// </summary>
+        /// <param name="userEmail">Email of the user to check.</param>
+        /// <param name="groupName">Display name of the group.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>True if the user is in the group; otherwise false.</returns>
         public async Task<bool> IsUserInGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
             var groupId = await ResolveGroupIdByName(groupName, ct);
@@ -206,6 +287,9 @@ namespace Theatre_TimeLine.Services
             return members.Any(m => string.Equals(m.Id, user.Id, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>
+        /// Resolves a group id from its display name, using an in-memory cache when possible.
+        /// </summary>
         private async Task<string?> ResolveGroupIdByName(string groupName, CancellationToken ct)
         {
             if (_groupIdByName.TryGetValue(groupName, out var id)) return id;
@@ -215,6 +299,9 @@ namespace Theatre_TimeLine.Services
             return g.Id;
         }
 
+        /// <summary>
+        /// Finds a group by display name using Graph (Top=1).
+        /// </summary>
         private async Task<Group?> FindGroupByNameAsync(string groupName, CancellationToken ct)
         {
             try
@@ -234,6 +321,9 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <summary>
+        /// Attempts to count group members efficiently using <c>@odata.count</c> with eventual consistency.
+        /// </summary>
         private async Task<int> TryCountMembersAsync(string groupId, CancellationToken ct)
         {
             try
@@ -264,6 +354,9 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <summary>
+        /// Maps a Graph <see cref="User"/> to <see cref="AppUser"/> selecting a best-effort email.
+        /// </summary>
         private static AppUser ToAppUser(User u)
         {
             var email = !string.IsNullOrWhiteSpace(u.Mail) ? u.Mail :
@@ -276,6 +369,9 @@ namespace Theatre_TimeLine.Services
             };
         }
 
+        /// <summary>
+        /// Resolves a user by email via direct lookup or filtered search across mail/UPN/otherMails.
+        /// </summary>
         private async Task<AppUser?> ResolveUserByEmailAsync(string email, CancellationToken ct)
         {
             try
@@ -300,6 +396,9 @@ namespace Theatre_TimeLine.Services
             return u != null ? ToAppUser(u) : null;
         }
 
+        /// <summary>
+        /// Produces a Graph-safe mail nickname from a display name.
+        /// </summary>
         private static string SanitizeMailNickname(string name)
         {
             var chars = name.Select(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_' ? ch : '-').ToArray();
@@ -310,8 +409,14 @@ namespace Theatre_TimeLine.Services
             return nick;
         }
 
+        /// <summary>
+        /// Escapes single quotes for safe OData filter usage.
+        /// </summary>
         private static string EscapeOData(string value) => value.Replace("'", "''");
 
+        /// <summary>
+        /// Caches a display-name to group-id mapping to reduce Graph lookups.
+        /// </summary>
         private void CacheGroupId(string name, string id)
         {
             if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(id))

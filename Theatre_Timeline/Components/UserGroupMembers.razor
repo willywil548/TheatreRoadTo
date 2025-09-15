@@ -5,6 +5,11 @@
 @inject ISecurityGroupService SecurityGroupService
 @inject ISnackbar Snackbar
 
+@* 
+    Component: UserGroupMembers
+    Summary: Renders the members of a security group and allows removal of individual users.
+    Emits OnChanged when the membership changes so parents can refresh counts or UI. 
+*@
 <MudList T="string" Dense="true">
     @if (_members.Count == 0)
     {
@@ -28,16 +33,31 @@
 </MudList>
 
 @code {
+    /// <summary>
+    /// The display name of the security group whose members are rendered.
+    /// </summary>
     [Parameter] public string GroupName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Callback raised after membership changes (e.g., upon removal).
+    /// Parents can use this to refresh counts or other dependent UI.
+    /// </summary>
     [Parameter] public EventCallback OnChanged { get; set; }
 
     private IReadOnlyList<AppUser> _members = Array.Empty<AppUser>();
 
+    /// <summary>
+    /// Loads members each time parameters change (e.g., when GroupName changes).
+    /// </summary>
     protected override async Task OnParametersSetAsync()
     {
         _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
     }
 
+    /// <summary>
+    /// Removes the specified user from the group and refreshes the list.
+    /// Emits <see cref="OnChanged"/> when done.
+    /// </summary>
     private async Task Remove(AppUser user)
     {
         await SecurityGroupService.RemoveUserFromGroupAsync(user.Email, GroupName);

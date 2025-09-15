@@ -4,6 +4,11 @@ using Theatre_TimeLine.Contracts;
 
 namespace Theatre_TimeLine.Services
 {
+    /// <summary>
+    /// Hosted service that verifies required security groups exist at application startup.
+    /// It can ensure global groups, tenant-level groups, and optionally road-level groups,
+    /// based on configuration and the current tenant/road configuration.
+    /// </summary>
     internal sealed class SecurityGroupStartupVerifier : IHostedService
     {
         private readonly ILogger<SecurityGroupStartupVerifier> _logger;
@@ -23,6 +28,10 @@ namespace Theatre_TimeLine.Services
             _config = config;
         }
 
+        /// <summary>
+        /// Ensures all configured security groups exist in the directory.
+        /// This runs once during application startup.
+        /// </summary>
         public async Task StartAsync(CancellationToken cancellationToken)
         {
             try
@@ -78,6 +87,9 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <summary>
+        /// No-op on shutdown. Part of the <see cref="IHostedService"/> contract.
+        /// </summary>
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

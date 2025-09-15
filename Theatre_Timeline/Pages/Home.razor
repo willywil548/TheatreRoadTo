@@ -9,6 +9,14 @@
 @inject AuthenticationStateProvider Auth
 @inject NavigationManager Nav
 
+@* 
+    Page: Home
+    Summary: After sign-in, lists tenants and roads the current user can access.
+    Access rules:
+      - Global admins: all tenants and roads
+      - Tenant managers/users: all roads for that tenant
+      - Road users: only roads where the user is a member
+*@
 <MudPaper Class="pa-4">
     <MudText Typo="Typo.h5">My Tenants and Roads</MudText>
     <MudDivider Class="my-2" />
@@ -78,6 +86,9 @@
     private readonly List<TenantItem> _items = new();
     private bool _loading = true;
 
+    /// <summary>
+    /// Loads accessible tenants and roads for the current user according to group memberships.
+    /// </summary>
     protected override async Task OnInitializedAsync()
     {
         _loading = true;
@@ -137,12 +148,21 @@
         _loading = false;
     }
 
+    /// <summary>
+    /// Navigates to the Road page for the given tenant and road.
+    /// </summary>
     private void OpenRoad(Guid tenantId, Guid roadId)
         => Nav.NavigateTo($"RoadToThere/{tenantId}/{roadId}");
 
+    /// <summary>
+    /// View model for a tenant and the roads visible to the current user.
+    /// </summary>
     private sealed class TenantItem
     {
+        /// <summary>Tenant metadata and roads container.</summary>
         public ITenantContainer Tenant { get; set; } = default!;
+
+        /// <summary>Roads the user can access within the tenant.</summary>
         public List<IRoadToThere> Roads { get; set; } = new();
         public bool IsManager { get; set; }
         public bool IsMember { get; set; }
