@@ -175,6 +175,9 @@ app.Use(async (ctx, next) =>
 
 app.MapControllers();
 
+// Redirect "/" to "/home" (302). Use permanent: true for 308.
+app.MapGet("/", () => Results.Redirect("/home", permanent: false)).AllowAnonymous();
+
 // Require auth for the Blazor Hub
 app.MapBlazorHub().RequireAuthorization();
 
