@@ -174,7 +174,7 @@ namespace Theatre_TimeLine.Services
         /// <param name="ct">Cancellation token.</param>
         public async Task DeleteGroupByNameAsync(string groupName, CancellationToken ct = default)
         {
-            var id = await ResolveGroupIdByName(groupName, ct);
+            var id = ResolveGroupIdByName(groupName, ct);
             if (id == null) return;
             await graphClient.Groups[id].DeleteAsync(requestConfiguration: null, cancellationToken: ct);
             groupIdByName.Remove(groupName);
@@ -245,7 +245,7 @@ namespace Theatre_TimeLine.Services
         /// <param name="ct">Cancellation token.</param>
         public async Task AddUserToGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct) ?? (await EnsureGroupAsync(groupName, ct: ct)).Id;
+            var groupId = ResolveGroupIdByName(groupName, ct) ?? (await EnsureGroupAsync(groupName, ct: ct)).Id;
             var user = await ResolveUserByEmailAsync(userEmail, ct)
                        ?? await InviteUserAsync(userEmail, userEmail, null, ct);
 
@@ -263,7 +263,7 @@ namespace Theatre_TimeLine.Services
         /// <param name="ct">Cancellation token.</param>
         public async Task RemoveUserFromGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct);
+            var groupId = ResolveGroupIdByName(groupName, ct);
             if (string.IsNullOrEmpty(groupId))
             {
                 return;
@@ -285,7 +285,7 @@ namespace Theatre_TimeLine.Services
         /// <returns>Readonly list of users in the group.</returns>
         public async Task<IReadOnlyList<AppUser>> GetGroupMembersAsync(string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct);
+            var groupId = ResolveGroupIdByName(groupName, ct);
             if (string.IsNullOrEmpty(groupId) ||
                 !this.groupUsersById.TryGetValue(groupId, out HashSet<AppUser>? result) ||
                 result is null)
@@ -305,7 +305,7 @@ namespace Theatre_TimeLine.Services
         /// <returns>True if the user is in the group; otherwise false.</returns>
         public async Task<bool> IsUserInGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct);
+            var groupId = ResolveGroupIdByName(groupName, ct);
             if (string.IsNullOrEmpty(groupId))
             {
                 return false;
@@ -324,14 +324,16 @@ namespace Theatre_TimeLine.Services
         /// <summary>
         /// Resolves a group id from its display name, using an in-memory cache when possible.
         /// </summary>
-        private async Task<string> ResolveGroupIdByName(string groupName, CancellationToken ct)
+        private string ResolveGroupIdByName(string groupName, CancellationToken ct)
         {
+            this.graphUserEventWait.Wait(ct);
+
             if (groupIdByName.TryGetValue(groupName, out var id))
             {
                 return id;
             }
 
-            return await Task.FromResult(string.Empty);
+            return string.Empty;
         }
 
         private async Task<AppUser?> ResolveUserByEmailAsync(string userEmail, CancellationToken ct)
@@ -465,7 +467,7 @@ namespace Theatre_TimeLine.Services
                 return;
             }
 
-            this.graphUserEventWait.Set();
+            this.graphUserEventWait.Reset();
             try
             {
                 var resp = await graphClient.Groups.GetAsync(cfg =>
