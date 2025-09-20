@@ -41,7 +41,7 @@ namespace Theatre_TimeLine.Contracts
 
         public int GetHashCode([DisallowNull] AppUser obj)
         {
-            return obj.ToString().ToLower().GetHashCode();
+            return obj.ToString().GetHashCode(StringComparison.OrdinalIgnoreCase);
         }
     }
 
