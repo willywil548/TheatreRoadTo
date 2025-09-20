@@ -68,7 +68,6 @@ namespace Theatre_TimeLine.Services
         /// <inheritDoc />
         public Task StopAsync(CancellationToken cancellationToken)
         {
-            this.graphClient.Dispose();
             return Task.CompletedTask;
         }
 
