@@ -493,7 +493,7 @@ namespace Theatre_TimeLine.Services
 
                     if (securityGroup?.Members == null)
                     {
-                        return;
+                        continue;
                     }
 
                     // The only point to caching the group is for access to members.
@@ -505,7 +505,7 @@ namespace Theatre_TimeLine.Services
 
                     if (users is null)
                     {
-                        return;
+                        continue;
                     }
 
                     foreach (var member in securityGroup.Members)
