@@ -51,6 +51,7 @@ namespace Theatre_TimeLine.Services
                 var graph = new GraphServiceClient(credential, new[] { "https://graph.microsoft.com/.default" });
                 services.AddSingleton(graph);
                 services.AddSingleton<ISecurityGroupService, GraphSecurityGroupService>();
+                services.AddHostedService<GraphSecurityGroupService>(p => (GraphSecurityGroupService)p.GetRequiredService<ISecurityGroupService>());
             }
             else
             {
