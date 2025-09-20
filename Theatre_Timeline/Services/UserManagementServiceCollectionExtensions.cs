@@ -1,7 +1,7 @@
-using System.Security.Cryptography.X509Certificates;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Graph;
+using System.Security.Cryptography.X509Certificates;
 using Theatre_TimeLine.Contracts;
 
 namespace Theatre_TimeLine.Services
@@ -65,44 +65,21 @@ namespace Theatre_TimeLine.Services
         /// </summary>
         private static X509Certificate2? LoadCertificateFromConfig(IConfiguration config, string prefix)
         {
-            var base64 = config[$"{prefix}:CertificateBase64"];
-            var base64Pwd = config[$"{prefix}:CertificatePassword"];
-            if (!string.IsNullOrWhiteSpace(base64))
+            string? certificateName = config.GetValue<string>($"{prefix}:CertificateName");
+            if (string.IsNullOrEmpty(certificateName))
             {
-                var raw = Convert.FromBase64String(base64);
-                return new X509Certificate2(raw, base64Pwd, X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
+                return null;
             }
 
-            var pfxPath = config[$"{prefix}:CertificatePath"];
-            var pfxPwd = config[$"{prefix}:CertificatePassword"];
-            if (!string.IsNullOrWhiteSpace(pfxPath) && File.Exists(pfxPath))
+            string? base64 = config.GetValue<string>(certificateName);
+            if (string.IsNullOrEmpty(base64))
             {
-                return new X509Certificate2(pfxPath, pfxPwd, X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
+                return null;
             }
 
-            var thumb = config[$"{prefix}:CertificateThumbprint"];
-            if (!string.IsNullOrWhiteSpace(thumb))
-            {
-                thumb = thumb.Replace(" ", string.Empty).ToUpperInvariant();
-                var storeName = config[$"{prefix}:CertificateStoreName"] ?? "My";
-
-                foreach (var location in new[] { StoreLocation.CurrentUser, StoreLocation.LocalMachine })
-                {
-                    using var store = new X509Store(storeName, location);
-                    try
-                    {
-                        store.Open(OpenFlags.ReadOnly);
-                        var found = store.Certificates.Find(X509FindType.FindByThumbprint, thumb, validOnly: false);
-                        if (found.Count > 0) return found[0];
-                    }
-                    finally
-                    {
-                        store.Close();
-                    }
-                }
-            }
-
-            return null;
+            // Use the Azure Key Vault Cert.
+            var raw = Convert.FromBase64String(base64);
+            return new X509Certificate2(raw);
         }
     }
 }
