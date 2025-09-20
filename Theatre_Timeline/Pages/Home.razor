@@ -94,7 +94,7 @@
         _loading = true;
 
         var auth = await Auth.GetAuthenticationStateAsync();
-        var email = auth.User.FindFirst("preferred_username")?.Value ?? auth.User.Identity?.Name ?? string.Empty;
+        var email = auth.User.GetEmail();
 
         var tenants = TenantManagerService.GetTenants();
         bool isGlobal = false;

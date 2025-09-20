@@ -2,6 +2,7 @@
 @using Theatre_TimeLine.Models
 @namespace Theatre_TimeLine.Components
 @inherits LayoutComponentBase
+@inject ISecurityGroupService SecurityGroupService
 
 <MudCard Class="card">
     <MudCardHeader Class="card card-header">@this.TenantContainer.TenantName</MudCardHeader>
