@@ -2,8 +2,6 @@
 @using Theatre_TimeLine.Models
 @namespace Theatre_TimeLine.Components
 @inherits LayoutComponentBase
-@inject ISecurityGroupService SecurityGroupService
-@inject AuthenticationStateProvider AuthenticationStateProvider
 
 <MudCard Class="card">
     <MudCardHeader Class="card card-header">@this.TenantContainer.TenantName</MudCardHeader>
@@ -17,16 +15,6 @@
         <MudExpansionPanels>
             @foreach (IRoadToThere road in TenantContainer.Roads)
             {
-                if (!SecurityGroupService
-                    .HasRequiredPerms(
-                        Services.RequiredSecurityLevel.TenantManager,
-                        this.email,
-                        road.TenantId,
-                        road.RoadId))
-                {
-                    continue;
-                }
-
                 <MudExpansionPanel Text="@road.ToString()">
                     <RoadConfiguration Road="@road" OnSaveRoad="@OnSaveRoad" OnRemoveRoad="@OnRemoveRoad" />
                 </MudExpansionPanel>
@@ -55,22 +43,15 @@
     };
 
     private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
-    private string email = string.Empty;
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             SetButtonText(0);
-            email = await AuthenticationStateProvider.GetAuthenticationStateAsync()
-            .ContinueWith(ctx =>
-            {
-                return ctx.Result?.User.GetEmail() ?? string.Empty;
-            })
-            .ConfigureAwait(false);
         }
 
-        await base.OnAfterRenderAsync(firstRender);
+        return base.OnAfterRenderAsync(firstRender);
     }
 
     [Parameter]
