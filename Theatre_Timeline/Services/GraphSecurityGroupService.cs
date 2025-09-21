@@ -1,8 +1,5 @@
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
-using System.Collections.Frozen;
-using System.Security.Cryptography.Xml;
-using System.Threading;
 using Theatre_TimeLine.Contracts;
 
 namespace Theatre_TimeLine.Services

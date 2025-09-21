@@ -34,12 +34,14 @@
                 }
 
                 <MudExpansionPanel Text="@container.TenantName" Expanded="ShouldOpenPanel(container.TenantId.ToString())" ExpandedChanged="(changedArgs) => OnPanelChange(tenantId: container.TenantId.ToString(), changedArgs)">
-                    <TenantConfiguration TenantContainer="@container"
-                                         OnCreateRoad="CreateRoad"
-                                         OnRemoveTenant="RemoveTenant"
-                                         OnSaveRoad="SaveRoad"
-                                         OnRemoveRoad="RemoveRoad"
-                                         OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
+                    <CascadingAuthenticationState>
+                        <TenantConfiguration TenantContainer="@container"
+                                             OnCreateRoad="CreateRoad"
+                                             OnRemoveTenant="RemoveTenant"
+                                             OnSaveRoad="SaveRoad"
+                                             OnRemoveRoad="RemoveRoad"
+                                             OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
+                    </CascadingAuthenticationState>
                     <MudDivider Class="my-2" />
                     <TenantUserManagement TenantContainer="@container" />
                 </MudExpansionPanel>
@@ -175,6 +177,6 @@
 
     private bool HasRequiredPerms(RequiredSecurityLevel requiredSecurityLevel, Guid tenantId)
     {
-        return SecurityGroupService.HasRequiredPerms(RequiredSecurityLevel.TenantManager, userEmail, tenantId, Guid.Empty).Result;
+        return SecurityGroupService.HasRequiredPerms(RequiredSecurityLevel.TenantManager, userEmail, tenantId, Guid.Empty);
     }
 }
