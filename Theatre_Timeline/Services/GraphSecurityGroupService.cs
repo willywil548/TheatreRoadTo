@@ -57,9 +57,12 @@ namespace Theatre_TimeLine.Services
             }
             catch (Exception e)
             {
-                this.logger.LogError(e, "Failed to cache existing groups.");
-                throw;
+                // Log the error but do not throw, so the timer can retry and the service remains operational.
+                this.logger.LogError(e, "Failed to cache existing groups on startup. Will retry on next timer cycle.");
             }
+
+            // Always start the timer, even if initial cache failed, to allow for recovery.
+            this.securityGroupRefreshTimer.Change(this.securityRefreshCycle, this.securityRefreshCycle);
         }
 
         /// <inheritDoc />
