@@ -5,7 +5,8 @@ namespace Theatre_TimeLine.Services
         Global,
         TenantManager,
         TenantUser,
-        RoadUser
+        RoadUser,
+        NotAuthorized
     }
 
     public static class SecurityGroupNameBuilder

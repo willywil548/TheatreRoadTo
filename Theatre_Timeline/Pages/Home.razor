@@ -42,21 +42,9 @@
                             <MudText Typo="Typo.h6">@item.Tenant.TenantName</MudText>
                             <MudText Typo="Typo.caption">@item.Tenant.Description</MudText>
                             <MudDivider Class="my-2" />
-                            @if (item.IsManager)
-                            {
-                                <MudChip T="string" Color="Color.Primary" Label="true" Class="mr-1">Manager</MudChip>
-                            }
-                            else if (item.IsMember)
-                            {
-                                <MudChip T="string" Color="Color.Secondary" Label="true" Class="mr-1">Member</MudChip>
-                            }
-                            else
-                            {
-                                <MudChip T="string" Color="Color.Info" Label="true" Class="mr-1">Road Access</MudChip>
-                            }
 
                             <MudList T="string" Dense="true" Class="mt-2">
-                                @if (item.Roads.Count == 0)
+                                @if (item.Roads.Count() == 0)
                                 {
                                     <MudListItem Disabled="true">No accessible roads</MudListItem>
                                 }
@@ -70,6 +58,23 @@
                                             <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="@(() => OpenRoad(item.Tenant.TenantId, r.RoadId))">
                                                 Open
                                             </MudButton>
+
+                                            @if (item.IsManager(r.RoadId.ToString()))
+                                            {
+                                                <MudChip T="string" Color="Color.Primary" Label="true" Class="mr-1">Manager</MudChip>
+                                            }
+                                            else if (item.IsMember(r.RoadId.ToString()))
+                                            {
+                                                <MudChip T="string" Color="Color.Secondary" Label="true" Class="mr-1">Member</MudChip>
+                                            }
+                                            else if (item.IsRoadMember(r.RoadId.ToString()))
+                                            {
+                                                <MudChip T="string" Color="Color.Secondary" Label="true" Class="mr-1">Member</MudChip>
+                                            }
+                                            else
+                                            {
+                                                <MudChip T="string" Color="Color.Info" Label="true" Class="mr-1">Road Access</MudChip>
+                                            }
                                         </MudListItem>
                                     }
                                 }
@@ -115,33 +120,24 @@
 
             var roads = new List<IRoadToThere>();
 
-            if (isGlobal || isMgr || isMember)
+            foreach (var r in t.Roads)
             {
-                // Tenant-level access => all roads visible
-                roads.AddRange(t.Roads);
-            }
-            else
-            {
-                // Road-scoped access => include only roads with membership
-                foreach (var r in t.Roads)
+                if (string.Equals(r.TenantId, Services.TenantManagerService.DemoGuid))
                 {
-                    var roadGroup = SecurityGroupNameBuilder.TenantRoadUser(t.TenantId, r.RoadId);
-                    if (!string.IsNullOrWhiteSpace(email) && await SecurityGroupService.IsUserInGroupAsync(email, roadGroup))
-                    {
-                        roads.Add(r);
-                    }
+                    roads.Add(r);
+                    continue;
+                }
+
+                var roadGroup = SecurityGroupNameBuilder.TenantRoadUser(t.TenantId, r.RoadId);
+                if (!string.IsNullOrWhiteSpace(email) && await SecurityGroupService.IsUserInGroupAsync(email, roadGroup))
+                {
+                    roads.Add(r);
                 }
             }
 
             if (roads.Count > 0 || isGlobal || isMgr || isMember)
             {
-                _items.Add(new TenantItem
-                {
-                    Tenant = t,
-                    Roads = roads,
-                    IsManager = isMgr,
-                    IsMember = !isMgr && isMember // member but not manager
-                });
+                _items.Add(new TenantItem(SecurityGroupService, t, email));
             }
         }
 
@@ -159,12 +155,77 @@
     /// </summary>
     private sealed class TenantItem
     {
-        /// <summary>Tenant metadata and roads container.</summary>
-        public ITenantContainer Tenant { get; set; } = default!;
+        private readonly ISecurityGroupService securityGroupService;
+        private readonly string email;
+        private readonly Dictionary<string, RequiredSecurityLevel> levelMap = new Dictionary<string, RequiredSecurityLevel>();
+
+        internal TenantItem(
+            ISecurityGroupService securityGroupService,
+            ITenantContainer tenantContainer,
+            string email)
+        {
+            this.securityGroupService = securityGroupService;
+            this.Tenant = tenantContainer;
+            this.email = email;
+        }
+
+        public ITenantContainer Tenant { get; init; }
 
         /// <summary>Roads the user can access within the tenant.</summary>
-        public List<IRoadToThere> Roads { get; set; } = new();
-        public bool IsManager { get; set; }
-        public bool IsMember { get; set; }
+        public IEnumerable<IRoadToThere> Roads => GetRoadsToThere();
+
+        public bool IsManager(string roadId)
+        {
+
+            if (levelMap.TryGetValue(roadId, out RequiredSecurityLevel level))
+            {
+                return level == RequiredSecurityLevel.TenantManager ||
+                level == RequiredSecurityLevel.Global;
+            }
+
+            return false;
+        }
+
+        public bool IsMember (string roadId)
+        {
+            if (levelMap.TryGetValue(roadId, out RequiredSecurityLevel level))
+            {
+                return level == RequiredSecurityLevel.TenantUser;
+            }
+
+            return false;
+        }
+
+        public bool IsRoadMember (string roadId)
+        {
+            if (levelMap.TryGetValue(roadId, out RequiredSecurityLevel level))
+            {
+                return level == RequiredSecurityLevel.RoadUser;
+            }
+
+            return false;
+        }
+
+        private IEnumerable<IRoadToThere> GetRoadsToThere()
+        {
+            this.levelMap.Clear();
+            List<IRoadToThere> roads = new();
+            foreach (var r in Tenant.Roads)
+            {
+                if (string.Equals(r.TenantId, Services.TenantManagerService.DemoGuid))
+                {
+                    roads.Add(r);
+                    continue;
+                }
+
+                if (r.IsUserAuthorizedForRoad(email, securityGroupService, out RequiredSecurityLevel requiredSecurityLevel))
+                {
+                    levelMap[r.RoadId.ToString()] = requiredSecurityLevel;
+                    roads.Add(r);
+                }
+            }
+
+            return roads;
+        }
     }
 }
