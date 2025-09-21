@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+using System.Security.Claims;
+using Theatre_TimeLine.Services;
 
 namespace Theatre_TimeLine.Contracts
 {
@@ -23,5 +24,54 @@ namespace Theatre_TimeLine.Contracts
 
         Task<IReadOnlyList<AppUser>> GetGroupMembersAsync(string groupName, CancellationToken ct = default);
         Task<bool> IsUserInGroupAsync(string userEmail, string groupName, CancellationToken ct = default);
+    }
+
+    /// <summary>
+    /// Extensions to the <see cref="GraphSecurityGroupService"/>.
+    /// </summary>
+    public static class SecurityGroupServiceExtensions
+    {
+        internal static bool HasRequiredPerms(
+            this ISecurityGroupService securityGroupService,
+            RequiredSecurityLevel securityLevel,
+            string? user,
+            Guid tenantId,
+            Guid roadId = default)
+        {
+            if (string.IsNullOrEmpty(user))
+            {
+                return false;
+            }
+
+            if (string.Equals(tenantId.ToString(), TenantManagerService.DemoGuid))
+            {
+                return true;
+            }
+
+            bool isRoadUser = securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantRoadUser(tenantId, roadId)).Result;
+            bool isTenantUser = securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantUser(tenantId)).Result;
+            bool isTenantManager = securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantManager(tenantId)).Result;
+            bool isGlobalAdmin = securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.GlobalAdminsGroup).Result;
+
+            return securityLevel switch
+            {
+                RequiredSecurityLevel.RoadUser => isRoadUser || isTenantManager || isGlobalAdmin,
+                RequiredSecurityLevel.TenantUser => isRoadUser || isTenantUser || isTenantManager || isGlobalAdmin,
+                RequiredSecurityLevel.TenantManager => isTenantManager || isGlobalAdmin,
+                RequiredSecurityLevel.Global => isGlobalAdmin,
+                _ => false
+            };
+        }
+
+        public static string GetEmail(this ClaimsPrincipal claimsPrincipal)
+        {
+            return claimsPrincipal.FindFirst("preferred_username")?.Value ??
+                claimsPrincipal.Identity?.Name ??
+                string.Empty;
+        }
     }
 }

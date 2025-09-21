@@ -14,22 +14,61 @@ namespace Theatre_TimeLine.Services
     /// - Some Graph endpoints are eventually consistent (e.g., invitations); short delays may be observed.
     /// - Group mail nicknames are sanitized to comply with Graph constraints.
     /// </remarks>
-    internal sealed class GraphSecurityGroupService : ISecurityGroupService
+    internal sealed class GraphSecurityGroupService : ISecurityGroupService, IHostedService
     {
-        private readonly GraphServiceClient _graph;
-        private readonly string _inviteRedirectUrl;
-        private readonly Dictionary<string, string> _groupIdByName = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ManualResetEventSlim graphUserEventWait = new ManualResetEventSlim(true);
+        private readonly GraphServiceClient graphClient;
+        private readonly string inviteRedirectUrl;
+        private readonly ILogger logger;
+        private readonly Dictionary<string, string> groupIdByName = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HashSet<AppUser>> groupUsersById = new Dictionary<string, HashSet<AppUser>>(StringComparer.OrdinalIgnoreCase);
+        private readonly TimeSpan securityRefreshCycle = TimeSpan.FromMinutes(15);
+        private readonly Timer securityGroupRefreshTimer;
+        private DateTime lastCheckedGroups = DateTime.MinValue;
+
 
         /// <summary>
         /// Initializes a new instance of <see cref="GraphSecurityGroupService"/>.
         /// </summary>
         /// <param name="graph">An authenticated <see cref="GraphServiceClient"/> (app-only).</param>
         /// <param name="config">Application configuration used for invite settings.</param>
-        public GraphSecurityGroupService(GraphServiceClient graph, IConfiguration config)
+        public GraphSecurityGroupService(GraphServiceClient graph, IConfiguration config, ILogger<GraphSecurityGroupService> logger)
         {
-            _graph = graph;
-            _inviteRedirectUrl = config["Graph:InviteRedirectUrl"] ?? "https://localhost/";
+            this.graphClient = graph;
+            this.inviteRedirectUrl = config["Graph:InviteRedirectUrl"] ?? "https://localhost/";
+            this.logger = logger;
+            this.securityGroupRefreshTimer = new Timer(this.GetAndCacheAppSecurityGroups, this, -1, -1);
         }
+
+        #region IHostedService Interface
+
+        /// <summary>
+        /// Runs startup activities.
+        /// Syncs with Graph provider the current available security groups for the application.
+        /// </summary>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        public async Task StartAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await GetAndCacheAppSecurityGroups(this, cancellationToken);
+                this.securityGroupRefreshTimer.Change(this.securityRefreshCycle, this.securityRefreshCycle);
+            }
+            catch (Exception e)
+            {
+                this.logger.LogError(e, "Failed to cache existing groups.");
+                throw;
+            }
+        }
+
+        /// <inheritDoc />
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        #endregion
 
         /// <summary>
         /// Gets all application-scoped security groups (filtered by the app prefix).
@@ -38,7 +77,7 @@ namespace Theatre_TimeLine.Services
         /// <returns>Readonly collection of groups with member counts.</returns>
         public async Task<IReadOnlyList<SecurityGroup>> ListGroupsAsync(CancellationToken ct = default)
         {
-            var resp = await _graph.Groups.GetAsync(cfg =>
+            var resp = await graphClient.Groups.GetAsync(cfg =>
             {
                 cfg.QueryParameters.Select = ["id", "displayName", "description"];
                 cfg.QueryParameters.Top = 999;
@@ -101,7 +140,7 @@ namespace Theatre_TimeLine.Services
             if (safeDescription != null)
                 group.Description = safeDescription;
 
-            var created = await _graph.Groups.PostAsync(group, cancellationToken: ct);
+            var created = await graphClient.Groups.PostAsync(group, cancellationToken: ct);
 
             if (created == null || string.IsNullOrEmpty(created.Id))
                 throw new InvalidOperationException("Failed to create group in Entra ID.");
@@ -131,10 +170,10 @@ namespace Theatre_TimeLine.Services
         /// <param name="ct">Cancellation token.</param>
         public async Task DeleteGroupByNameAsync(string groupName, CancellationToken ct = default)
         {
-            var id = await ResolveGroupIdByName(groupName, ct);
+            var id = ResolveGroupIdByName(groupName, ct);
             if (id == null) return;
-            await _graph.Groups[id].DeleteAsync(requestConfiguration: null, cancellationToken: ct);
-            _groupIdByName.Remove(groupName);
+            await graphClient.Groups[id].DeleteAsync(requestConfiguration: null, cancellationToken: ct);
+            groupIdByName.Remove(groupName);
         }
 
         /// <summary>
@@ -145,7 +184,7 @@ namespace Theatre_TimeLine.Services
         /// <returns>Matching users (best-effort mapped email/display name).</returns>
         public async Task<IReadOnlyList<AppUser>> SearchUsersAsync(string query, CancellationToken ct = default)
         {
-            var resp = await _graph.Users.GetAsync(cfg =>
+            var resp = await graphClient.Users.GetAsync(cfg =>
             {
                 cfg.QueryParameters.Top = 20;
                 cfg.QueryParameters.Select = ["id", "displayName", "mail", "userPrincipalName"];
@@ -169,10 +208,10 @@ namespace Theatre_TimeLine.Services
             var user = await ResolveUserByEmailAsync(email, ct);
             if (user == null)
             {
-                _ = await _graph.Invitations.PostAsync(new Invitation
+                _ = await graphClient.Invitations.PostAsync(new Invitation
                 {
                     InvitedUserEmailAddress = email,
-                    InviteRedirectUrl = _inviteRedirectUrl,
+                    InviteRedirectUrl = inviteRedirectUrl,
                     SendInvitationMessage = true,
                 },
                 requestConfiguration: null,
@@ -202,13 +241,13 @@ namespace Theatre_TimeLine.Services
         /// <param name="ct">Cancellation token.</param>
         public async Task AddUserToGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct) ?? (await EnsureGroupAsync(groupName, ct: ct)).Id;
+            var groupId = ResolveGroupIdByName(groupName, ct) ?? (await EnsureGroupAsync(groupName, ct: ct)).Id;
             var user = await ResolveUserByEmailAsync(userEmail, ct)
                        ?? await InviteUserAsync(userEmail, userEmail, null, ct);
 
-            await _graph.Groups[groupId].Members.Ref.PostAsync(new ReferenceCreate
+            await graphClient.Groups[groupId].Members.Ref.PostAsync(new ReferenceCreate
             {
-                OdataId = $"{_graph.RequestAdapter.BaseUrl}/directoryObjects/{user.Id}"
+                OdataId = $"{graphClient.RequestAdapter.BaseUrl}/directoryObjects/{user.Id}"
             }, requestConfiguration: null, cancellationToken: ct);
         }
 
@@ -220,13 +259,18 @@ namespace Theatre_TimeLine.Services
         /// <param name="ct">Cancellation token.</param>
         public async Task RemoveUserFromGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct);
-            if (groupId == null) return;
+            var groupId = ResolveGroupIdByName(groupName, ct);
+            if (string.IsNullOrEmpty(groupId))
+            {
+                return;
+            }
 
-            var user = await ResolveUserByEmailAsync(userEmail, ct);
-            if (user == null) return;
+            if (!(await ResolveUserByEmailAsync(userEmail, ct) is AppUser appUser))
+            {
+                return;
+            }
 
-            await _graph.Groups[groupId].Members[user.Id].Ref.DeleteAsync(requestConfiguration: null, cancellationToken: ct);
+            await graphClient.Groups[groupId].Members[appUser.Id].Ref.DeleteAsync(requestConfiguration: null, cancellationToken: ct);
         }
 
         /// <summary>
@@ -237,35 +281,15 @@ namespace Theatre_TimeLine.Services
         /// <returns>Readonly list of users in the group.</returns>
         public async Task<IReadOnlyList<AppUser>> GetGroupMembersAsync(string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct);
-            if (groupId == null) return Array.Empty<AppUser>();
-
-            var result = new List<AppUser>(32);
-
-            var page = await _graph.Groups[groupId].Members.GetAsync(cfg =>
+            var groupId = ResolveGroupIdByName(groupName, ct);
+            if (string.IsNullOrEmpty(groupId) ||
+                !this.groupUsersById.TryGetValue(groupId, out HashSet<AppUser>? result) ||
+                result is null)
             {
-                cfg.QueryParameters.Top = 999;
-            }, ct);
-
-            while (true)
-            {
-                if (page?.Value != null)
-                {
-                    foreach (var item in page.Value)
-                    {
-                        if (item is User u)
-                            result.Add(ToAppUser(u));
-                    }
-                }
-
-                var nextLink = page?.OdataNextLink;
-                if (string.IsNullOrEmpty(nextLink)) break;
-
-                // WithUrl(...) GetAsync in this SDK shape does not take a CancellationToken
-                page = await _graph.Groups[groupId].Members.WithUrl(nextLink).GetAsync();
+                return Array.Empty<AppUser>();
             }
 
-            return result;
+            return await Task.FromResult(new List<AppUser>(result));
         }
 
         /// <summary>
@@ -277,11 +301,17 @@ namespace Theatre_TimeLine.Services
         /// <returns>True if the user is in the group; otherwise false.</returns>
         public async Task<bool> IsUserInGroupAsync(string userEmail, string groupName, CancellationToken ct = default)
         {
-            var groupId = await ResolveGroupIdByName(groupName, ct);
-            if (groupId == null) return false;
+            var groupId = ResolveGroupIdByName(groupName, ct);
+            if (string.IsNullOrEmpty(groupId))
+            {
+                return false;
+            }
 
             var user = await ResolveUserByEmailAsync(userEmail, ct);
-            if (user == null) return false;
+            if (user == null)
+            {
+                return false;
+            }
 
             var members = await GetGroupMembersAsync(groupName, ct);
             return members.Any(m => string.Equals(m.Id, user.Id, StringComparison.OrdinalIgnoreCase));
@@ -290,13 +320,31 @@ namespace Theatre_TimeLine.Services
         /// <summary>
         /// Resolves a group id from its display name, using an in-memory cache when possible.
         /// </summary>
-        private async Task<string?> ResolveGroupIdByName(string groupName, CancellationToken ct)
+        private string ResolveGroupIdByName(string groupName, CancellationToken ct)
         {
-            if (_groupIdByName.TryGetValue(groupName, out var id)) return id;
-            var g = await FindGroupByNameAsync(groupName, ct);
-            if (g?.Id == null) return null;
-            CacheGroupId(groupName, g.Id);
-            return g.Id;
+            this.graphUserEventWait.Wait(ct);
+
+            if (groupIdByName.TryGetValue(groupName, out var id))
+            {
+                return id;
+            }
+
+            return string.Empty;
+        }
+
+        private async Task<AppUser?> ResolveUserByEmailAsync(string userEmail, CancellationToken ct)
+        {
+            this.graphUserEventWait.Wait(ct);
+
+            foreach (HashSet<AppUser> set in this.groupUsersById.Values)
+            {
+                if (set.FirstOrDefault(app => string.Equals(userEmail, app.Email, StringComparison.OrdinalIgnoreCase)) is AppUser result)
+                {
+                    return await Task.FromResult(result);
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -306,7 +354,7 @@ namespace Theatre_TimeLine.Services
         {
             try
             {
-                var resp = await _graph.Groups.GetAsync(cfg =>
+                var resp = await graphClient.Groups.GetAsync(cfg =>
                 {
                     cfg.QueryParameters.Select = ["id", "displayName", "description"];
                     cfg.QueryParameters.Filter = $"displayName eq '{EscapeOData(groupName)}'";
@@ -316,7 +364,7 @@ namespace Theatre_TimeLine.Services
             }
             catch (Exception e)
             {
-                Console.Write(e);
+                this.logger.LogError(e, $"Failed to find the group:{groupName}");
                 throw;
             }
         }
@@ -328,7 +376,7 @@ namespace Theatre_TimeLine.Services
         {
             try
             {
-                var members = await _graph.Groups[groupId].Members.GetAsync(cfg =>
+                var members = await graphClient.Groups[groupId].Members.GetAsync(cfg =>
                 {
                     cfg.QueryParameters.Top = 1;
                     cfg.QueryParameters.Count = true;
@@ -370,33 +418,6 @@ namespace Theatre_TimeLine.Services
         }
 
         /// <summary>
-        /// Resolves a user by email via direct lookup or filtered search across mail/UPN/otherMails.
-        /// </summary>
-        private async Task<AppUser?> ResolveUserByEmailAsync(string email, CancellationToken ct)
-        {
-            try
-            {
-                var direct = await _graph.Users[email].GetAsync(cfg =>
-                {
-                    cfg.QueryParameters.Select = ["id", "displayName", "mail", "userPrincipalName", "otherMails"];
-                }, ct);
-                if (direct != null) return ToAppUser(direct);
-            }
-            catch { /* ignore */ }
-
-            var resp = await _graph.Users.GetAsync(cfg =>
-            {
-                cfg.QueryParameters.Select = ["id", "displayName", "mail", "userPrincipalName", "otherMails"];
-                cfg.QueryParameters.Top = 1;
-                cfg.QueryParameters.Filter =
-                    $"mail eq '{EscapeOData(email)}' or userPrincipalName eq '{EscapeOData(email)}' or otherMails/any(c:c eq '{EscapeOData(email)}')";
-            }, ct);
-
-            var u = resp?.Value?.FirstOrDefault();
-            return u != null ? ToAppUser(u) : null;
-        }
-
-        /// <summary>
         /// Produces a Graph-safe mail nickname from a display name.
         /// </summary>
         private static string SanitizeMailNickname(string name)
@@ -417,10 +438,102 @@ namespace Theatre_TimeLine.Services
         /// <summary>
         /// Caches a display-name to group-id mapping to reduce Graph lookups.
         /// </summary>
-        private void CacheGroupId(string name, string id)
+        private void CacheGroupId(string? name, string? id)
         {
-            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(id))
-                _groupIdByName[name] = id;
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(id))
+            {
+                return;
+            }
+
+            if (!groupIdByName.TryAdd(name, id))
+            {
+                this.logger.LogWarning($"Group name ({name}) already has a value ({this.groupIdByName[name]}) so could not add {id} ");
+            }
+        }
+
+        private async void GetAndCacheAppSecurityGroups(object? state)
+        {
+            await GetAndCacheAppSecurityGroups(state, CancellationToken.None);
+        }
+
+        private async Task GetAndCacheAppSecurityGroups(object? state, CancellationToken cancellationToken)
+        {
+            if (state == null)
+            {
+                return;
+            }
+
+            this.graphUserEventWait.Reset();
+            try
+            {
+                var resp = await graphClient.Groups.GetAsync(cfg =>
+                {
+                    cfg.QueryParameters.Select = ["id", "displayName", "description"];
+                    cfg.QueryParameters.Filter = $"startswith(displayName,'{SecurityGroupNameBuilder.AppGroupPrefix}')";
+                    cfg.QueryParameters.Expand = ["Members"];
+                }, cancellationToken);
+
+                if (resp?.Value == null)
+                {
+                    return;
+                }
+
+                foreach (var securityGroup in resp.Value)
+                {
+                    if (securityGroup == null || securityGroup.Id == null)
+                    {
+                        continue;
+                    }
+
+                    this.CacheGroupId(securityGroup?.DisplayName, securityGroup?.Id);
+
+                    if (securityGroup?.Members == null)
+                    {
+                        continue;
+                    }
+
+                    // The only point to caching the group is for access to members.
+                    HashSet<AppUser>? users = null;
+                    if (!this.groupUsersById.TryGetValue(securityGroup.Id, out users))
+                    {
+                        users = new HashSet<AppUser>(new AppUserComparer());
+                    }
+
+                    if (users is null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var member in securityGroup.Members)
+                    {
+                        if (!(member is User user) || string.IsNullOrEmpty(user.Mail))
+                        {
+                            continue;
+                        }
+
+                        users.Add(
+                            new AppUser
+                            {
+                                Id = user.Id ?? user.Mail,
+                                DisplayName = user.DisplayName ?? user.Mail,
+                                Email = user.Mail
+                            });
+                    }
+
+                    this.groupUsersById[securityGroup.Id] = users;
+                }
+
+                this.lastCheckedGroups = DateTime.UtcNow;
+                this.logger.LogInformation("Cached security groups:");
+                foreach (KeyValuePair<string, string> groupsPairs in this.groupIdByName)
+                {
+                    this.logger.LogInformation($"{groupsPairs.Key}:...");
+                }
+            }
+            finally
+            {
+                this.graphUserEventWait.Set();
+            }
         }
     }
 }

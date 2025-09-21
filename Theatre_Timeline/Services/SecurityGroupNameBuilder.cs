@@ -1,19 +1,46 @@
-using Theatre_TimeLine.Models;
-
 namespace Theatre_TimeLine.Services
 {
+    public enum RequiredSecurityLevel
+    {
+        Global,
+        TenantManager,
+        TenantUser,
+        RoadUser,
+        NotAuthorized
+    }
+
     public static class SecurityGroupNameBuilder
     {
+        /// <summary>
+        /// Application prefix.
+        /// </summary>
         public const string AppGroupPrefix = "Roads-";
+
+        /// <summary>
+        /// Global Admin Group.
+        /// </summary>
         public static string GlobalAdminsGroup => $"{AppGroupPrefix}Admin";
 
-        // "Roads-Tenant-Manager-<tenantId>"
+        /// <summary>
+        /// Tenant level manager.
+        /// </summary>
+        /// <param name="tenantId">Tenant ID.</param>
+        /// <returns></returns>
         public static string TenantManager(Guid tenantId) => $"{AppGroupPrefix}Tenant-Manager-{tenantId}";
 
-        // "Roads-Tenant-User-<tenantId>"
+        /// <summary>
+        /// Tenant User.
+        /// </summary>
+        /// <param name="tenantId">Tenant ID.</param>
+        /// <returns></returns>
         public static string TenantUser(Guid tenantId) => $"{AppGroupPrefix}Tenant-User-{tenantId}";
 
-        // "Roads-Tenant-User-<tenantId>-<roadId>"
+        /// <summary>
+        /// Road user.
+        /// </summary>
+        /// <param name="tenantId">Tenant ID.</param>
+        /// <param name="roadId">Road ID</param>
+        /// <returns></returns>
         public static string TenantRoadUser(Guid tenantId, Guid roadId) => $"{AppGroupPrefix}Tenant-User-{tenantId}-{roadId}";
     }
 }
