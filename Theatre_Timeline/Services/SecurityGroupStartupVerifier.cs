@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Theatre_TimeLine.Contracts;
 
 namespace Theatre_TimeLine.Services
