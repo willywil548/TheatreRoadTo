@@ -12,14 +12,15 @@
 @attribute [Authorize]
 @page "/TenantManagement/{Tenant?}"
 
+@if (user != null)
+{
+    <pre>User: @(user.Identity?.Name ?? "no user")</pre>
+}
+
 <MudMenu Icon="@Icons.Material.Filled.MoreVert"
          style="fixed;"
          AriaLabel="Open user menu">
-    @if (HasRequiredPerms(RequiredSecurityLevel.Global))
-    {
-        <MudMenuItem Label="Create Tenant" OnClick="CreateTenant" />
-    }
-
+    <MudMenuItem Label="Create Tenant" Disabled="@(!_canCreateTenant)" OnClick="CreateTenant" />
     <MudMenuItem Label="Logout" OnClick="Logout" />
 </MudMenu>
 
@@ -28,20 +29,13 @@
         <MudExpansionPanels>
             @foreach (ITenantContainer container in TenantManagerService.GetTenants())
             {
-                if (!HasRequiredPerms(RequiredSecurityLevel.TenantManager, container.TenantId))
-                {
-                    continue;
-                }
-
                 <MudExpansionPanel Text="@container.TenantName" Expanded="ShouldOpenPanel(container.TenantId.ToString())" ExpandedChanged="(changedArgs) => OnPanelChange(tenantId: container.TenantId.ToString(), changedArgs)">
-                    <CascadingAuthenticationState>
-                        <TenantConfiguration TenantContainer="@container"
-                                             OnCreateRoad="CreateRoad"
-                                             OnRemoveTenant="RemoveTenant"
-                                             OnSaveRoad="SaveRoad"
-                                             OnRemoveRoad="RemoveRoad"
-                                             OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
-                    </CascadingAuthenticationState>
+                    <TenantConfiguration TenantContainer="@container"
+                                         OnCreateRoad="CreateRoad"
+                                         OnRemoveTenant="RemoveTenant"
+                                         OnSaveRoad="SaveRoad"
+                                         OnRemoveRoad="RemoveRoad"
+                                         OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
                     <MudDivider Class="my-2" />
                     <TenantUserManagement TenantContainer="@container" />
                 </MudExpansionPanel>
@@ -54,8 +48,8 @@
 
 @code {
     private bool _drawerOpen = true;
-    private string userEmail = string.Empty;
-
+    private ClaimsPrincipal? user;
+    private bool _canCreateTenant;
 
     [Parameter]
     public string? Tenant { get; set; }  = string.Empty;
@@ -63,8 +57,7 @@
     protected async override Task OnInitializedAsync()
     {
         await base.OnInitializedAsync();
-        ClaimsPrincipal user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-        userEmail = user.GetEmail();
+        user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
     }
 
     private void Logout()
@@ -110,7 +103,7 @@
 
     private void CreateTenant()
     {
-        if (!HasRequiredPerms(RequiredSecurityLevel.Global))
+        if (!_canCreateTenant)
         {
             Snackbar.Add("Only Roads-Admin can create tenants.", Severity.Warning);
             return;
@@ -127,12 +120,6 @@
 
     private void RemoveTenant(ITenantContainer tenantContainer)
     {
-        if (!HasRequiredPerms(RequiredSecurityLevel.TenantManager))
-        {
-            Snackbar.Add("Only Roads-Admin or TenantManagers can remove tenants.", Severity.Warning);
-            return;
-        }
-
         TenantManagerService.RemoveTenant(tenantContainer.TenantId);
         this.StateHasChanged();
     }
@@ -168,15 +155,5 @@
         UriBuilder uri = new(NavigationManager.BaseUri);
         uri.Path = $"TenantManagement/{tenantId}";
         NavigationManager.NavigateTo(uri.Uri.AbsoluteUri);
-    }
-
-    private bool HasRequiredPerms(RequiredSecurityLevel requiredSecurityLevel)
-    {
-        return HasRequiredPerms(RequiredSecurityLevel.TenantManager, Guid.Empty);
-    }
-
-    private bool HasRequiredPerms(RequiredSecurityLevel requiredSecurityLevel, Guid tenantId)
-    {
-        return SecurityGroupService.HasRequiredPerms(RequiredSecurityLevel.TenantManager, userEmail, tenantId, Guid.Empty);
     }
 }

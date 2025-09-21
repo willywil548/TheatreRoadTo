@@ -8,8 +8,6 @@
 
 @inject ITenantManagerService TenantManagerService
 @inject NavigationManager NavigationManager
-@inject ISecurityGroupService SecurityGroupService
-@inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JS
 
 @if (tenant is null)
@@ -18,28 +16,19 @@
     return;
 }
 
-@if (!SecurityGroupService.HasRequiredPerms(
-        Services.RequiredSecurityLevel.RoadUser | Services.RequiredSecurityLevel.TenantUser,
-        email,
-        Guid.Parse(TenantId ?? Guid.Empty.ToString()),
-        Guid.Parse(RoadId ?? Guid.Empty.ToString())))
-    {
-        <div>Not authorized..</div>
-    }
-
 <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" @ref="mudTabs" ActivePanelIndexChanged="(index) => OnTabChangedAsync(index)">
     <div style="margin: auto;width: 75%;padding: 10px;">
         @foreach (IRoadToThere road in tenant.Roads)
         {
             <MudTabPanel Text="@road?.Title" ID="road?.RoadId">
+                <MudMenu Icon="@Icons.Material.Filled.MoreVert" style="fixed; float:right" AriaLabel="Road Menu Options">
+                    <MudMenuItem Label="Create Address" OnClick="() =>  CreateAddress(road)" />
+                </MudMenu>
+
                 <MudText>@road?.Description</MudText>
                 <div class="image-center-container">
                     <img src="@road?.Banner" alt="@road?.Description" />
                 </div>
-
-                <MudMenu Icon="@Icons.Material.Filled.MoreVert" style="fixed; float:left" AriaLabel="Road Menu Options">
-                    <MudMenuItem Label="Create Address" OnClick="() => CreateAddress(road)" />
-                </MudMenu>
                 <MudTimeline>
                     @{
                         // Order addresses by Location (nulls last)
@@ -71,7 +60,6 @@
     private ITenantContainer? tenant;
     private bool open = false;
     private AddressEditor addressEditor = new();
-    private string email = string.Empty;
 
     [Parameter]
     public string? TenantId { get; set; } = string.Empty;
@@ -153,13 +141,6 @@
             {
                 await JS.InvokeVoidAsync("scrollToBlock", nearestBlockId);
             }
-
-            email = await AuthenticationStateProvider.GetAuthenticationStateAsync()
-                .ContinueWith(ctx =>
-                {
-                    return ctx.Result?.User?.GetEmail();
-                })
-                .ConfigureAwait(false) ?? string.Empty;
         }
 
     }
