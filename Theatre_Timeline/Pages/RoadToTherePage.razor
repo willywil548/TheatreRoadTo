@@ -18,11 +18,7 @@
     return;
 }
 
-@if (!SecurityGroupService.HasRequiredPerms(
-        Services.RequiredSecurityLevel.RoadUser | Services.RequiredSecurityLevel.TenantUser,
-        email,
-        Guid.Parse(TenantId ?? Guid.Empty.ToString()),
-        Guid.Parse(RoadId ?? Guid.Empty.ToString())))
+@if (!this.isAuthroized)
     {
         <div>Not authorized..</div>
     }
@@ -87,6 +83,7 @@
 
     // Store the nearest block id for scrolling
     private string? nearestBlockId;
+    private bool isAuthroized = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -103,7 +100,12 @@
             return;
         }
 
-        tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId));
+        this.isAuthroized = await SecurityGroupService.HasRequiredPerms(
+            Services.RequiredSecurityLevel.RoadUser | Services.RequiredSecurityLevel.TenantUser,
+            email,
+            tenantId: Guid.Parse(TenantId ?? Guid.Empty.ToString()),
+            roadId: Guid.Parse(RoadId ?? Guid.Empty.ToString()));
+        tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId ?? Guid.Empty.ToString()));
         await base.OnInitializedAsync();
     }
 

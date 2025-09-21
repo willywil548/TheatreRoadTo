@@ -177,6 +177,8 @@
 
     private bool HasRequiredPerms(RequiredSecurityLevel requiredSecurityLevel, Guid tenantId)
     {
-        return SecurityGroupService.HasRequiredPerms(requiredSecurityLevel, userEmail, tenantId, Guid.Empty);
+        return SecurityGroupService.HasRequiredPerms(requiredSecurityLevel, userEmail, tenantId, Guid.Empty)
+            .GetAwaiter()
+            .GetResult();
     }
 }

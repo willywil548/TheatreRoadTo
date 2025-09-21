@@ -31,7 +31,7 @@ namespace Theatre_TimeLine.Contracts
     /// </summary>
     public static class SecurityGroupServiceExtensions
     {
-        internal static bool HasRequiredPerms(
+        internal static async Task<bool> HasRequiredPerms(
             this ISecurityGroupService securityGroupService,
             RequiredSecurityLevel securityLevel,
             string? user,
@@ -48,14 +48,14 @@ namespace Theatre_TimeLine.Contracts
                 return true;
             }
 
-            bool isRoadUser = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantRoadUser(tenantId, roadId)).Result;
-            bool isTenantUser = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantUser(tenantId)).Result;
-            bool isTenantManager = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantManager(tenantId)).Result;
-            bool isGlobalAdmin = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.GlobalAdminsGroup).Result;
+            bool isRoadUser = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantRoadUser(tenantId, roadId)).ConfigureAwait(false);
+            bool isTenantUser = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantUser(tenantId)).ConfigureAwait(false);
+            bool isTenantManager = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantManager(tenantId)).ConfigureAwait(false);
+            bool isGlobalAdmin = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.GlobalAdminsGroup).ConfigureAwait(false);
 
             return securityLevel switch
             {

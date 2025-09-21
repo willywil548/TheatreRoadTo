@@ -22,7 +22,7 @@
                         Services.RequiredSecurityLevel.TenantManager,
                         this.email,
                         road.TenantId,
-                        road.RoadId))
+                        road.RoadId).GetAwaiter().GetResult())
                 {
                     continue;
                 }
