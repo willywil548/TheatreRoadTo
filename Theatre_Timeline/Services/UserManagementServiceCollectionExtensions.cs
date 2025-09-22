@@ -22,7 +22,7 @@ namespace Theatre_TimeLine.Services
         /// </summary>
         public static IServiceCollection AddUserManagementServices(this IServiceCollection services, IConfiguration config)
         {
-            bool hasSecretService = services.Any(serviceDesriptor => serviceDesriptor.ServiceType == typeof(SecretClient));
+            bool hasSecretService = services.Any(serviceDescriptor => serviceDescriptor.ServiceType == typeof(SecretClient));
 
             if (hasSecretService)
             {
