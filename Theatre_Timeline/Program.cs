@@ -40,7 +40,16 @@ if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
 {
     var credential = new DefaultAzureCredential();
     builder.Configuration["Graph:KeyVault"] = true.ToString();
-    builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
+    try
+    {
+        builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
+    }
+    catch (Azure.RequestFailedException rfe) when (rfe.Message.StartsWith("AKV10046"))
+    {
+        // Delay and retry
+        await Task.Delay(TimeSpan.FromSeconds(10));
+        builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
+    }
 }
 
 // Add services to the container.
