@@ -35,6 +35,8 @@ namespace Theatre_TimeLine.Services
                     var clientId = config["AzureAd:ClientId"];
                     var certSecretName = config["AzureAd:ClientCertificates:CertificateName"];
 
+                    Console.WriteLine("Fetching from Azure Key Vault");
+
                     // Fetch PFX from Key Vault as base64-encoded secret
                     KeyVaultSecret secret = secretClient.GetSecretAsync(certSecretName)
                     .ConfigureAwait(false)
@@ -42,6 +44,8 @@ namespace Theatre_TimeLine.Services
                     .GetResult()
                     .Value;
                     var certBytes = Convert.FromBase64String(secret.Value);
+
+                    Console.WriteLine($"Got Certificate from key vault. Content-Type:{secret.Properties.ContentType}. Expires:{secret.Properties.ExpiresOn}. Enabled:{secret.Properties.Enabled}");
 
                     // Load certificate safely in App Service
                     var cert = new X509Certificate2(certBytes, string.Empty, X509KeyStorageFlags.EphemeralKeySet);
