@@ -51,8 +51,6 @@ if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
         // Delay and retry
         await Task.Delay(TimeSpan.FromSeconds(10));
         builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
-        builder.Services.AddSingleton(_ =>
-            new SecretClient(new Uri(keyVaultUrl), new DefaultAzureCredential()));
     }
 
     builder.Services.AddSingleton(_ =>
