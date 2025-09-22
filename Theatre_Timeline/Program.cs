@@ -1,4 +1,5 @@
 using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
 using Cropper.Blazor.Extensions;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -9,6 +10,7 @@ using MudBlazor.Services;
 using System.Diagnostics;
 using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Services;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -50,6 +52,9 @@ if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
         await Task.Delay(TimeSpan.FromSeconds(10));
         builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
     }
+
+    builder.Services.AddSingleton(_ =>
+        new SecretClient(new Uri(keyVaultUrl), new DefaultAzureCredential()));
 }
 
 // Add services to the container.
