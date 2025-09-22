@@ -1,5 +1,6 @@
 using Azure.Core;
 using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
 using Microsoft.Graph;
 using System.Security.Cryptography.X509Certificates;
 using Theatre_TimeLine.Contracts;
@@ -21,35 +22,29 @@ namespace Theatre_TimeLine.Services
         /// </summary>
         public static IServiceCollection AddUserManagementServices(this IServiceCollection services, IConfiguration config)
         {
-            // Prefer AzureAd config (system account already wired in Program.cs), fallback to Graph keys
-            var tenantId = config["AzureAd:TenantId"] ?? config["Graph:TenantId"];
-            var clientId = config["AzureAd:ClientId"] ?? config["Graph:ClientId"];
+            bool hasSecretService = services.Any(serviceDesriptor => serviceDesriptor.ServiceType == typeof(SecretClient));
 
-            TokenCredential? credential = null;
-
-            if (!string.IsNullOrWhiteSpace(tenantId) && !string.IsNullOrWhiteSpace(clientId))
+            if (hasSecretService)
             {
-                // Prefer client certificate (from Key Vault-backed config or other sources)
-                var cert = LoadCertificateFromConfig(config, "AzureAd:ClientCertificates") ?? LoadCertificateFromConfig(config, "Graph");
-                if (cert != null)
+                services.AddSingleton(sp =>
                 {
-                    var options = new ClientCertificateCredentialOptions { SendCertificateChain = true };
-                    credential = new ClientCertificateCredential(tenantId!, clientId!, cert, options);
-                }
-                else
-                {
-                    var clientSecret = config["AzureAd:ClientSecret"] ?? config["Graph:ClientSecret"];
-                    if (!string.IsNullOrWhiteSpace(clientSecret))
-                    {
-                        credential = new ClientSecretCredential(tenantId!, clientId!, clientSecret);
-                    }
-                }
-            }
+                    var config = sp.GetRequiredService<IConfiguration>();
+                    var secretClient = sp.GetRequiredService<SecretClient>();
 
-            if (credential != null)
-            {
-                var graph = new GraphServiceClient(credential, new[] { "https://graph.microsoft.com/.default" });
-                services.AddSingleton(graph);
+                    var tenantId = config["AzureAd:TenantId"];
+                    var clientId = config["AzureAd:ClientId"];
+                    var certSecretName = config["AzureAd:ClientCertificates:CertificateName"];
+
+                    // Fetch PFX from Key Vault as base64-encoded secret
+                    KeyVaultSecret secret = secretClient.GetSecret(certSecretName).Value;
+                    var certBytes = Convert.FromBase64String(secret.Value);
+
+                    // Load certificate safely in App Service
+                    var cert = new X509Certificate2(certBytes, string.Empty, X509KeyStorageFlags.EphemeralKeySet);
+
+                    var credential = new ClientCertificateCredential(tenantId, clientId, cert);
+                    return new GraphServiceClient(credential, new[] { "https://graph.microsoft.com/.default" });
+                });
                 services.AddSingleton<ISecurityGroupService, GraphSecurityGroupService>();
                 services.AddHostedService<GraphSecurityGroupService>(p => (GraphSecurityGroupService)p.GetRequiredService<ISecurityGroupService>());
             }
@@ -59,28 +54,6 @@ namespace Theatre_TimeLine.Services
             }
 
             return services;
-        }
-
-        /// <summary>
-        /// Attempts to load a client certificate from configuration (base64 PFX, PFX path, or store thumbprint).
-        /// </summary>
-        private static X509Certificate2? LoadCertificateFromConfig(IConfiguration config, string prefix)
-        {
-            string? certificateName = config.GetValue<string>($"{prefix}:CertificateName");
-            if (string.IsNullOrEmpty(certificateName))
-            {
-                return null;
-            }
-
-            string? base64 = config.GetValue<string>(certificateName);
-            if (string.IsNullOrEmpty(base64))
-            {
-                return null;
-            }
-
-            // Use the Azure Key Vault Cert.
-            var raw = Convert.FromBase64String(base64);
-            return new X509Certificate2(raw);
         }
     }
 }
