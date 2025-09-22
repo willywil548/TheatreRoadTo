@@ -36,7 +36,11 @@ namespace Theatre_TimeLine.Services
                     var certSecretName = config["AzureAd:ClientCertificates:CertificateName"];
 
                     // Fetch PFX from Key Vault as base64-encoded secret
-                    KeyVaultSecret secret = secretClient.GetSecret(certSecretName).Value;
+                    KeyVaultSecret secret = secretClient.GetSecretAsync(certSecretName)
+                    .ConfigureAwait(false)
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value;
                     var certBytes = Convert.FromBase64String(secret.Value);
 
                     // Load certificate safely in App Service
