@@ -11,6 +11,7 @@ namespace Theatre_TimeLine.Services
     internal sealed class TenantManagerService : ITenantManagerService
     {
         public const string DemoGuid = "00000000-0000-0000-0000-3eca75185852";
+        private const string HomeVariable = "%home%";
         private static readonly SemaphoreSlim writeManager = new(1, 1);
         private const string configurationKey = "TenantManager:DataPath";
         private const string tenantConfigurationFile = "TenantConfiguration.json";
@@ -30,6 +31,14 @@ namespace Theatre_TimeLine.Services
             if (string.IsNullOrEmpty(dataPath))
             {
                 dataPath = "./webapps/data";
+            }
+
+            if (dataPath.StartsWith(HomeVariable, StringComparison.OrdinalIgnoreCase))
+            {
+                string home = Environment.GetEnvironmentVariable("home") ?? ".";
+                string homePath = Path.GetFullPath(home);
+                dataPath = dataPath.Replace(home, string.Empty);
+                dataPath = Path.Combine(homePath, dataPath.Trim(new char[] { '/', '\\' }));
             }
 
             if (!Path.IsPathRooted(dataPath))
