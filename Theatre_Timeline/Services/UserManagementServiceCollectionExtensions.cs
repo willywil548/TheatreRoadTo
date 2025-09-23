@@ -47,7 +47,7 @@ namespace Theatre_TimeLine.Services
                     {
                         Debug.WriteLine("Certificate failed to load from key vault. Falling back.");
                         cert = new X509Certificate2(
-                            Convert.FromBase64String(config["AzureAd:ClientCertificates:CertificateFallBack"] ?? throw new InvalidOperationException("Fallback certificate not define.")),
+                            Convert.FromBase64String(config["AzureAd:ClientCertificates:CertificateFallBack"] ?? throw new InvalidOperationException("Fallback certificate not defined.")),
                             string.Empty, X509KeyStorageFlags.MachineKeySet);
 
                     }
