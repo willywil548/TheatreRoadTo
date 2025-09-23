@@ -1,3 +1,4 @@
+using Microsoft.Graph.Models;
 using System.Security.Claims;
 using Theatre_TimeLine.Services;
 
@@ -31,7 +32,7 @@ namespace Theatre_TimeLine.Contracts
     /// </summary>
     public static class SecurityGroupServiceExtensions
     {
-        internal static bool HasRequiredPerms(
+        internal static async Task<bool> HasRequiredPerms(
             this ISecurityGroupService securityGroupService,
             RequiredSecurityLevel securityLevel,
             string? user,
@@ -48,23 +49,37 @@ namespace Theatre_TimeLine.Contracts
                 return true;
             }
 
-            bool isRoadUser = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantRoadUser(tenantId, roadId)).Result;
-            bool isTenantUser = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantUser(tenantId)).Result;
-            bool isTenantManager = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantManager(tenantId)).Result;
-            bool isGlobalAdmin = securityGroupService
-                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.GlobalAdminsGroup).Result;
+            bool isRoadUser = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantRoadUser(tenantId, roadId));
+            bool isTenantUser = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantUser(tenantId));
+            bool isTenantManager = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.TenantManager(tenantId));
+            bool isGlobalAdmin = await securityGroupService
+                .IsUserInGroupAsync(user, SecurityGroupNameBuilder.GlobalAdminsGroup);
 
-            return securityLevel switch
+            if (securityLevel.HasFlag(RequiredSecurityLevel.RoadUser) && isRoadUser)
             {
-                RequiredSecurityLevel.RoadUser => isRoadUser || isTenantManager || isGlobalAdmin,
-                RequiredSecurityLevel.TenantUser => isRoadUser || isTenantUser || isTenantManager || isGlobalAdmin,
-                RequiredSecurityLevel.TenantManager => isTenantManager || isGlobalAdmin,
-                RequiredSecurityLevel.Global => isGlobalAdmin,
-                _ => false
-            };
+                return true;
+            }
+
+            if (securityLevel.HasFlag(RequiredSecurityLevel.TenantUser) && isTenantUser)
+            {
+                return true;
+            }
+
+            if (securityLevel.HasFlag(RequiredSecurityLevel.TenantManager) && isTenantManager)
+            {
+                return true;
+            }
+
+            if (securityLevel.HasFlag(RequiredSecurityLevel.Global) && isGlobalAdmin)
+            {
+                return true;
+            }
+
+            return false;
+
         }
 
         public static string GetEmail(this ClaimsPrincipal claimsPrincipal)
