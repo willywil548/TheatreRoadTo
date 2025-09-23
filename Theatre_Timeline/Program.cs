@@ -14,13 +14,13 @@ using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Logging.AddConsole();
-builder.Logging.AddDebug();
-builder.Logging.AddEventSourceLogger(); // optional
-builder.Logging.AddAzureWebAppDiagnostics(); // if deploying to Azure App Service
+builder.Logging
+    .AddConsole()
+    .AddDebug()
+    .AddEventSourceLogger()
+    .AddAzureWebAppDiagnostics(); // if deploying to Azure App Service
 
 builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
-builder.Logging.AddFilter("Theatre_TimeLine.Controllers.AuthenticationMetaDataController", LogLevel.Debug);
 
 // Or global minimum (still overridden by specific category levels)
 builder.Logging.SetMinimumLevel(LogLevel.Information);
@@ -46,7 +46,7 @@ if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
     {
         builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
     }
-    catch (Azure.RequestFailedException rfe) when (rfe.Message.StartsWith("AKV10046"))
+    catch (Azure.RequestFailedException rfe) when (string.Equals("AKV10046", rfe.ErrorCode))
     {
         // Delay and retry
         await Task.Delay(TimeSpan.FromSeconds(10));
