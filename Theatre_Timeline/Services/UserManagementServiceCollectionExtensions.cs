@@ -1,7 +1,7 @@
-using Azure.Core;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
 using Microsoft.Graph;
+using System.Diagnostics;
 using System.Security.Cryptography.X509Certificates;
 using Theatre_TimeLine.Contracts;
 
@@ -30,24 +30,30 @@ namespace Theatre_TimeLine.Services
                 {
                     var config = sp.GetRequiredService<IConfiguration>();
                     var secretClient = sp.GetRequiredService<SecretClient>();
-
                     var tenantId = config["AzureAd:TenantId"];
                     var clientId = config["AzureAd:ClientId"];
-                    var certSecretName = config["AzureAd:ClientCertificates:CertificateName"];
+                    var certBase64 = config[config["AzureAd:ClientCertificates:CertificateName"] ?? string.Empty] ?? string.Empty;
 
-                    // Fetch PFX from Key Vault as base64-encoded secret
-                    KeyVaultSecret secret = secretClient.GetSecretAsync(certSecretName)
-                    .ConfigureAwait(false)
-                    .GetAwaiter()
-                    .GetResult()
-                    .Value;
-                    var certBytes = Convert.FromBase64String(secret.Value);
+                    X509Certificate2? cert = null;
 
-                    // Load certificate safely in App Service
-                    var cert = new X509Certificate2(certBytes, string.Empty, X509KeyStorageFlags.EphemeralKeySet);
+                    try
+                    {
+                        var certBytes = Convert.FromBase64String(certBase64);
+
+                        // Load certificate safely in App Service
+                        cert = new X509Certificate2(certBytes, string.Empty, X509KeyStorageFlags.EphemeralKeySet);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine("Certificate failed to load from key vault. Falling back.");
+                        cert = new X509Certificate2(
+                            config["AzureAd:ClientCertificates:CertificateFallBack"] ?? throw new InvalidOperationException("Fallback certificate not define."),
+                            string.Empty, X509KeyStorageFlags.EphemeralKeySet);
+
+                    }
 
                     var credential = new ClientCertificateCredential(tenantId, clientId, cert);
-                    return new GraphServiceClient(credential, new[] { "https://graph.microsoft.com/.default" });
+                    return new GraphServiceClient(credential, [ "https://graph.microsoft.com/.default" ]);
                 });
                 services.AddSingleton<ISecurityGroupService, GraphSecurityGroupService>();
                 services.AddHostedService<GraphSecurityGroupService>(p => (GraphSecurityGroupService)p.GetRequiredService<ISecurityGroupService>());
