@@ -1,7 +1,5 @@
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
-using Microsoft.Extensions.Logging.Console;
-using Microsoft.Extensions.Logging.TraceSource;
 using Microsoft.Graph;
 using System.Diagnostics;
 using System.Security.Cryptography.X509Certificates;
