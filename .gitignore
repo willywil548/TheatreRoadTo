@@ -17,3 +17,7 @@
 /Theatre_Timeline/Theatre_Timeline.csproj.user
 /Theatre_Timeline/Properties/PublishProfiles/FolderProfile.pubxml
 /Theatre_Timeline/wwwroot/.well-known/microsoft-identity-association.json
+/Theatre_Timeline/Properties/PublishProfiles/TimelyTrailsWebService - Web Deploy.pubxml
+/Theatre_Timeline/Properties/ServiceDependencies/TimelyTrailsWebService - Web Deploy/profile.arm.json
+/Theatre_Timeline/wwwroot/.well-known/microsoft-identity-association.json
+/Theatre_Timeline/.config/dotnet-tools.json

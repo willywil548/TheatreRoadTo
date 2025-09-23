@@ -18,13 +18,10 @@
     return;
 }
 
-@if (!SecurityGroupService.HasRequiredPerms(
-        Services.RequiredSecurityLevel.RoadUser | Services.RequiredSecurityLevel.TenantUser,
-        email,
-        Guid.Parse(TenantId ?? Guid.Empty.ToString()),
-        Guid.Parse(RoadId ?? Guid.Empty.ToString())))
+@if (!this.isAuthorized)
     {
         <div>Not authorized..</div>
+        return;
     }
 
 <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" @ref="mudTabs" ActivePanelIndexChanged="(index) => OnTabChangedAsync(index)">
@@ -72,6 +69,7 @@
     private bool open = false;
     private AddressEditor addressEditor = new();
     private string email = string.Empty;
+    private bool isAuthorized = false;
 
     [Parameter]
     public string? TenantId { get; set; } = string.Empty;
@@ -104,6 +102,23 @@
         }
 
         tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId));
+
+        this.email = await AuthenticationStateProvider.GetAuthenticationStateAsync()
+            .ContinueWith(ctx =>
+            {
+                return ctx.Result?.User?.GetEmail();
+            })
+            .ConfigureAwait(false) ?? string.Empty;
+        this.isAuthorized = await SecurityGroupService.HasRequiredPerms(
+            Services.RequiredSecurityLevel.RoadUser |
+            Services.RequiredSecurityLevel.TenantUser |
+            Services.RequiredSecurityLevel.TenantManager |
+            Services.RequiredSecurityLevel.Global,
+            email,
+            Guid.Parse(TenantId ?? Guid.Empty.ToString()),
+            Guid.Parse(RoadId ?? Guid.Empty.ToString()))
+            .ConfigureAwait(false);
+
         await base.OnInitializedAsync();
     }
 
@@ -153,13 +168,6 @@
             {
                 await JS.InvokeVoidAsync("scrollToBlock", nearestBlockId);
             }
-
-            email = await AuthenticationStateProvider.GetAuthenticationStateAsync()
-                .ContinueWith(ctx =>
-                {
-                    return ctx.Result?.User?.GetEmail();
-                })
-                .ConfigureAwait(false) ?? string.Empty;
         }
 
     }

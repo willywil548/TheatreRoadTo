@@ -1,5 +1,6 @@
 ﻿@using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Services
 @namespace Theatre_TimeLine.Components
 @inherits LayoutComponentBase
 @inject ISecurityGroupService SecurityGroupService
@@ -15,18 +16,8 @@
         </p>
         <h6>Roads:</h6>
         <MudExpansionPanels>
-            @foreach (IRoadToThere road in TenantContainer.Roads)
+            @foreach (IRoadToThere road in this.authorizedRoads)
             {
-                if (!SecurityGroupService
-                    .HasRequiredPerms(
-                        Services.RequiredSecurityLevel.TenantManager,
-                        this.email,
-                        road.TenantId,
-                        road.RoadId))
-                {
-                    continue;
-                }
-
                 <MudExpansionPanel Text="@road.ToString()">
                     <RoadConfiguration Road="@road" OnSaveRoad="@OnSaveRoad" OnRemoveRoad="@OnRemoveRoad" />
                 </MudExpansionPanel>
@@ -56,6 +47,7 @@
 
     private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
     private string email = string.Empty;
+    private List<IRoadToThere> authorizedRoads = new List<IRoadToThere>();
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -68,6 +60,22 @@
                 return ctx.Result?.User.GetEmail() ?? string.Empty;
             })
             .ConfigureAwait(false);
+            IList<IRoadToThere> roads = new List<IRoadToThere>();
+            foreach (var road in TenantContainer.Roads)
+            {
+                var has = await SecurityGroupService
+                    .HasRequiredPerms(
+                        RequiredSecurityLevel.TenantManager | RequiredSecurityLevel.Global,
+                        email,
+                        road.TenantId,
+                        road.RoadId);
+                if (has)
+                {
+                    roads.Add(road);
+                }
+            }
+
+            this.authorizedRoads = new List<IRoadToThere>(roads);
         }
 
         await base.OnAfterRenderAsync(firstRender);

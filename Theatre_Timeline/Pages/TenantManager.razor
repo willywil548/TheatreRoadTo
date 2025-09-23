@@ -28,7 +28,7 @@
         <MudExpansionPanels>
             @foreach (ITenantContainer container in TenantManagerService.GetTenants())
             {
-                if (!HasRequiredPerms(RequiredSecurityLevel.TenantManager, container.TenantId))
+                if (!HasRequiredPerms(RequiredSecurityLevel.TenantManager | RequiredSecurityLevel.Global, container.TenantId))
                 {
                     continue;
                 }
@@ -172,11 +172,13 @@
 
     private bool HasRequiredPerms(RequiredSecurityLevel requiredSecurityLevel)
     {
-        return HasRequiredPerms(RequiredSecurityLevel.TenantManager, Guid.Empty);
+        return HasRequiredPerms(requiredSecurityLevel, Guid.Empty);
     }
 
     private bool HasRequiredPerms(RequiredSecurityLevel requiredSecurityLevel, Guid tenantId)
     {
-        return SecurityGroupService.HasRequiredPerms(RequiredSecurityLevel.TenantManager, userEmail, tenantId, Guid.Empty);
+        return SecurityGroupService.HasRequiredPerms(requiredSecurityLevel, userEmail, tenantId, Guid.Empty)
+            .GetAwaiter()
+            .GetResult();
     }
 }

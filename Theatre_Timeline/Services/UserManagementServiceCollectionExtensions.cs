@@ -41,14 +41,14 @@ namespace Theatre_TimeLine.Services
                         var certBytes = Convert.FromBase64String(certBase64);
 
                         // Load certificate safely in App Service
-                        cert = new X509Certificate2(certBytes, string.Empty, X509KeyStorageFlags.EphemeralKeySet);
+                        cert = new X509Certificate2(certBytes, string.Empty, X509KeyStorageFlags.MachineKeySet);
                     }
                     catch (Exception ex)
                     {
                         Debug.WriteLine("Certificate failed to load from key vault. Falling back.");
                         cert = new X509Certificate2(
-                            config["AzureAd:ClientCertificates:CertificateFallBack"] ?? throw new InvalidOperationException("Fallback certificate not define."),
-                            string.Empty, X509KeyStorageFlags.EphemeralKeySet);
+                            Convert.FromBase64String(config["AzureAd:ClientCertificates:CertificateFallBack"] ?? throw new InvalidOperationException("Fallback certificate not defined.")),
+                            string.Empty, X509KeyStorageFlags.MachineKeySet);
 
                     }
 
