@@ -53,14 +53,32 @@ namespace Theatre_TimeLine.Services
                     }
 
                     var credential = new ClientCertificateCredential(tenantId, clientId, cert);
-                    return new GraphServiceClient(credential, [ "https://graph.microsoft.com/.default" ]);
+                    return new GraphServiceClient(credential, ["https://graph.microsoft.com/.default"]);
                 });
                 services.AddSingleton<ISecurityGroupService, GraphSecurityGroupService>();
                 services.AddHostedService<GraphSecurityGroupService>(p => (GraphSecurityGroupService)p.GetRequiredService<ISecurityGroupService>());
             }
             else
             {
-                services.AddSingleton<ISecurityGroupService, StubSecurityGroupService>();
+                services.AddSingleton(sp =>
+                {
+                    var config = sp.GetRequiredService<IConfiguration>();
+                    var tenantId = config["AzureAd:TenantId"];
+                    var clientId = config["AzureAd:ClientId"];
+
+                    // Fallback to client secret
+                    var clientSecret = config["AzureAd:Client:Secret"];
+                    if (string.IsNullOrEmpty(clientSecret))
+                    {
+                        throw new InvalidOperationException("Neither client certificate nor client secret is configured for Graph authentication.");
+                    }
+
+                    var secretCredential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+                    Debug.WriteLine("Using client secret credential for Graph authentication.");
+                    return new GraphServiceClient(secretCredential, ["https://graph.microsoft.com/.default"]);
+                });
+                services.AddSingleton<ISecurityGroupService, GraphSecurityGroupService>();
+                services.AddHostedService<GraphSecurityGroupService>(p => (GraphSecurityGroupService)p.GetRequiredService<ISecurityGroupService>());
             }
 
             return services;
