@@ -91,3 +91,11 @@ a, .btn-link {
     max-width: 100%;
     height: auto;
 }
+
+.banner-img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    width: 100%;
+    object-fit: cover; /* Maintains aspect ratio while filling container */
+}
