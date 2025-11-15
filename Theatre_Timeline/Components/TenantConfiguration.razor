@@ -9,7 +9,9 @@
 <MudCard Class="card">
     <MudCardHeader Class="card card-header">@this.TenantContainer.TenantName</MudCardHeader>
     <MudCardContent>
-        <h6>ID: @TenantContainer.TenantId</h6>
+        <h6>
+            ID: <MudLink Href="@GetTenantRoadLink()" Underline="Underline.Always">@TenantContainer.TenantId</MudLink>
+        </h6>
         Description:
         <p>
             @TenantContainer.Description
@@ -117,5 +119,10 @@
                 OnRemoveTenant?.Invoke(TenantContainer);
                 break;
         }
+    }
+
+    private string GetTenantRoadLink()
+    {
+        return $"/RoadToThere/{TenantContainer.TenantId}";
     }
 }
