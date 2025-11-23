@@ -7,12 +7,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'Theatre_Timeline/**'
   workflow_dispatch:
-
-env:
-  AzureAd__ClientId: ${{ secrets.AzureAd__ClientId }}
 
 jobs:
   build:
@@ -34,30 +29,10 @@ jobs:
       - name: dotnet publish
         run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
 
-      - name: Copy microsoft-identity-association.json to publish output
-        shell: pwsh
-        run: |
-          $src = Join-Path $env:GITHUB_WORKSPACE 'Theatre_Timeline\wwwroot\.well-known\microsoft-identity-association.json'
-          $destDir = Join-Path $env:DOTNET_ROOT 'myapp\wwwroot\.well-known'
-          if (!(Test-Path $src)) {
-            Write-Error "Source file not found: $src"
-          }
-          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-          Copy-Item -Path $src -Destination (Join-Path $destDir 'microsoft-identity-association.json') -Force
-          Write-Host "Copied to $destDir"
-
-      - name: List publish output tree before artifact upload
-        shell: pwsh
-        run: |
-          $publishDir = Join-Path $env:DOTNET_ROOT 'myapp'
-          Write-Host "== Publish output tree =="
-          Get-ChildItem -Path $publishDir -Recurse -Force | Select-Object FullName,Length,LastWriteTime | Out-String -Width 200 | Write-Host
-
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: .net-app
-          include-hidden-files: true
           path: ${{env.DOTNET_ROOT}}/myapp
 
   deploy:
@@ -76,9 +51,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_713724C6DC6E464E83E330A27AAD808C }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_3EC63701EB244F0399E0D4EDDDE68F4C }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_2389EFBEDAB8418E9FC6412FF2FC5792 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_453AD8FD450549A398EEA4630AD994B2 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_63F293FDA9B345FCB5E676ED8CDADBBF }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_37DCAF9A503242A6821FFEEBBB731509 }}
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -87,4 +62,4 @@ jobs:
           app-name: 'TimelyTrailsWebService'
           slot-name: 'Production'
           package: .
-
+          
