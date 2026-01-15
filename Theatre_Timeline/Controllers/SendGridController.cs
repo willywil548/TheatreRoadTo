@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
+using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Services;
 
 namespace Theatre_TimeLine.Controllers
@@ -10,22 +11,24 @@ namespace Theatre_TimeLine.Controllers
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
-    [AllowAnonymous]  // SendGrid webhooks need anonymous access
     public class SendGridController : ControllerBase
     {
         private readonly ILogger<SendGridController> _logger;
         private readonly IConfiguration _configuration;
         private readonly IEmailEncryptionService _encryptionService;
+        private readonly ISecurityGroupService _securityGroupService;
         private readonly string _emailStoragePath;
 
         public SendGridController(
             ILogger<SendGridController> logger, 
             IConfiguration configuration,
-            IEmailEncryptionService encryptionService)
+            IEmailEncryptionService encryptionService,
+            ISecurityGroupService securityGroupService)
         {
             _logger = logger;
             _configuration = configuration;
             _encryptionService = encryptionService;
+            _securityGroupService = securityGroupService;
 
             // Get storage path from configuration or use default
             string? emailPath = _configuration.GetValue<string>("SendGrid:EmailStoragePath");
@@ -61,6 +64,7 @@ namespace Theatre_TimeLine.Controllers
         /// encrypts them, and writes to disk for proof of concept.
         /// </remarks>
         [HttpPost("inbound")]
+        [AllowAnonymous]  // SendGrid webhooks need anonymous access
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> ReceiveInboundEmail()
         {
@@ -135,11 +139,20 @@ namespace Theatre_TimeLine.Controllers
         /// <summary>
         /// Retrieves and decrypts a stored email by filename.
         /// Endpoint: GET /api/sendgrid/email/{filename}
+        /// Requires Global Admin (Roads-Admin) membership.
         /// </summary>
         /// <param name="filename">The encrypted email filename.</param>
         [HttpGet("email/{filename}")]
+        [Authorize]
         public async Task<IActionResult> GetEmail(string filename)
         {
+            // Check if user is Global Admin
+            if (!await IsGlobalAdminAsync())
+            {
+                _logger.LogWarning("Unauthorized access attempt to email by user: {User}", User.GetEmail());
+                return Forbid();
+            }
+
             try
             {
                 // Sanitize filename to prevent directory traversal
@@ -169,10 +182,19 @@ namespace Theatre_TimeLine.Controllers
         /// <summary>
         /// Lists all stored encrypted emails.
         /// Endpoint: GET /api/sendgrid/emails
+        /// Requires Global Admin (Roads-Admin) membership.
         /// </summary>
         [HttpGet("emails")]
-        public IActionResult ListEmails()
+        [Authorize]
+        public async Task<IActionResult> ListEmails()
         {
+            // Check if user is Global Admin
+            if (!await IsGlobalAdminAsync())
+            {
+                _logger.LogWarning("Unauthorized access attempt to email list by user: {User}", User.GetEmail());
+                return Forbid();
+            }
+
             try
             {
                 var files = Directory.GetFiles(_emailStoragePath, "email_*.enc")
@@ -198,6 +220,7 @@ namespace Theatre_TimeLine.Controllers
         /// Health check endpoint to verify the webhook is accessible.
         /// </summary>
         [HttpGet("health")]
+        [AllowAnonymous]
         public IActionResult HealthCheck()
         {
             // Get encryption status from configuration
@@ -216,6 +239,22 @@ namespace Theatre_TimeLine.Controllers
                 encryption = encryptionEnabled ? "enabled" : "disabled",
                 timestamp = DateTime.UtcNow
             });
+        }
+
+        /// <summary>
+        /// Checks if the current user is a member of the Global Admin (Roads-Admin) group.
+        /// </summary>
+        private async Task<bool> IsGlobalAdminAsync()
+        {
+            string? userEmail = User.GetEmail();
+            if (string.IsNullOrEmpty(userEmail))
+            {
+                return false;
+            }
+
+            return await _securityGroupService.IsUserInGroupAsync(
+                userEmail, 
+                SecurityGroupNameBuilder.GlobalAdminsGroup);
         }
     }
 }
