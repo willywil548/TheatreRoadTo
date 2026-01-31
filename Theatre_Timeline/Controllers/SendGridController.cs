@@ -111,10 +111,10 @@ namespace Theatre_TimeLine.Controllers
                     }).ToList();
                 }
 
-                // Log parsed email info (sanitized to prevent log injection)
+                // Log parsed email info (sanitized and masked to protect PII)
                 _logger.LogInformation("Parsed email - From: {From}, To: {To}, Subject: {Subject}",
-                    SanitizeForLog(email.GetFromEmail()),
-                    SanitizeForLog(email.GetToEmail()),
+                    MaskEmail(email.GetFromEmail()),
+                    MaskEmail(email.GetToEmail()),
                     SanitizeForLog(email.Subject));
                 _logger.LogInformation("Email validation - DKIM: {Dkim}, SPF: {Spf}, Spam Score: {SpamScore}",
                     email.IsDkimValid(), email.IsSpfValid(), email.GetSpamScoreValue());
@@ -187,15 +187,33 @@ namespace Theatre_TimeLine.Controllers
             {
                 // Sanitize filename to prevent directory traversal
                 var safeFilename = Path.GetFileName(filename);
+
+                // Additional validation: ensure filename matches expected pattern
+                if (string.IsNullOrEmpty(safeFilename) ||
+                    !safeFilename.StartsWith("email_", StringComparison.Ordinal) ||
+                    !safeFilename.EndsWith(".enc", StringComparison.Ordinal))
+                {
+                    return BadRequest(new { error = "Invalid filename format" });
+                }
+
                 var filePath = Path.Combine(_emailStoragePath, safeFilename);
 
-                if (!System.IO.File.Exists(filePath))
+                // Verify the resolved path is within the allowed directory (defense in depth)
+                var fullPath = Path.GetFullPath(filePath);
+                var allowedPath = Path.GetFullPath(_emailStoragePath);
+                if (!fullPath.StartsWith(allowedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("Path traversal attempt detected");
+                    return BadRequest(new { error = "Invalid path" });
+                }
+
+                if (!System.IO.File.Exists(fullPath))
                 {
                     return NotFound(new { error = "Email file not found" });
                 }
 
                 // Read and decrypt
-                var decryptedContent = await _encryptionService.ReadEncryptedFileAsync(filePath);
+                var decryptedContent = await _encryptionService.ReadEncryptedFileAsync(fullPath);
                 var email = JsonSerializer.Deserialize<SendGridInboundEmail>(decryptedContent);
 
                 _logger.LogInformation("Retrieved and decrypted email successfully");
@@ -317,6 +335,47 @@ namespace Theatre_TimeLine.Controllers
             }
 
             return sanitized;
+        }
+
+        /// <summary>
+        /// Masks an email address for logging to prevent PII exposure.
+        /// Example: "user@example.com" becomes "u***@e***.com"
+        /// </summary>
+        private static string MaskEmail(string? email)
+        {
+            if (string.IsNullOrEmpty(email))
+            {
+                return "[empty]";
+            }
+
+            var atIndex = email.IndexOf('@');
+            if (atIndex <= 0)
+            {
+                return "[invalid]";
+            }
+
+            var localPart = email[..atIndex];
+            var domainPart = email[(atIndex + 1)..];
+
+            // Mask local part: show first char + ***
+            var maskedLocal = localPart.Length > 0
+                ? $"{localPart[0]}***"
+                : "***";
+
+            // Mask domain: show first char + *** + TLD
+            var lastDotIndex = domainPart.LastIndexOf('.');
+            string maskedDomain;
+            if (lastDotIndex > 0)
+            {
+                var tld = domainPart[lastDotIndex..];
+                maskedDomain = $"{domainPart[0]}***{tld}";
+            }
+            else
+            {
+                maskedDomain = $"{domainPart[0]}***";
+            }
+
+            return $"{maskedLocal}@{maskedDomain}";
         }
 
 #pragma warning disable CA1822 // Mark members as static - method accesses instance members via User property
