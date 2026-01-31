@@ -316,6 +316,11 @@ namespace Theatre_TimeLine.Controllers
         /// </summary>
         private async Task<bool> IsGlobalAdminAsync()
         {
+            if (!User.Identity?.IsAuthenticated ?? false)
+            {
+                return false;
+            }
+
             string? userEmail = User.GetEmail();
             if (string.IsNullOrEmpty(userEmail))
             {
@@ -323,7 +328,7 @@ namespace Theatre_TimeLine.Controllers
             }
 
             return await _securityGroupService.IsUserInGroupAsync(
-                userEmail, 
+                userEmail,
                 SecurityGroupNameBuilder.GlobalAdminsGroup);
         }
     }
