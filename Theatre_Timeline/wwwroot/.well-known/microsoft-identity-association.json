@@ -1,7 +1,8 @@
 {
-    "associatedApplications":  [
-                                   {
-                                       "applicationId":  "cee1e565-115b-49d7-8c41-9df4b5a7182d"
-                                   }
-                               ]
+    "associatedApplications":
+    [
+        {
+            "applicationId":  "AzureAd__ClientId"
+        }
+    ]
 }
