@@ -83,14 +83,14 @@ namespace Theatre_TimeLine.Controllers
 
                 // Validate the webhook source
                 var validationResult = await _webhookValidator.ValidateRequestAsync(HttpContext);
-                
+
                 if (!validationResult.IsValid)
                 {
                     _logger.LogWarning("Webhook validation failed: {Reason}", SanitizeForLog(validationResult.Reason));
                     return Unauthorized(new { error = "Invalid webhook source", reason = validationResult.Reason });
                 }
 
-                _logger.LogInformation("Webhook validation passed. Headers captured: {HasHeaders}", 
+                _logger.LogInformation("Webhook validation passed. Headers captured: {HasHeaders}",
                     validationResult.Headers != null);
 
                 // Set metadata fields (not bound from form)
@@ -113,8 +113,8 @@ namespace Theatre_TimeLine.Controllers
 
                 // Log parsed email info (sanitized to prevent log injection)
                 _logger.LogInformation("Parsed email - From: {From}, To: {To}, Subject: {Subject}",
-                    SanitizeForLog(email.GetFromEmail()), 
-                    SanitizeForLog(email.GetToEmail()), 
+                    SanitizeForLog(email.GetFromEmail()),
+                    SanitizeForLog(email.GetToEmail()),
                     SanitizeForLog(email.Subject));
                 _logger.LogInformation("Email validation - DKIM: {Dkim}, SPF: {Spf}, Spam Score: {SpamScore}",
                     email.IsDkimValid(), email.IsSpfValid(), email.GetSpamScoreValue());
@@ -137,8 +137,8 @@ namespace Theatre_TimeLine.Controllers
                 email.StoredAs = filename;
 
                 // Serialize to JSON
-                var options = new JsonSerializerOptions 
-                { 
+                var options = new JsonSerializerOptions
+                {
                     WriteIndented = true,
                     DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
                 };
@@ -149,9 +149,9 @@ namespace Theatre_TimeLine.Controllers
 
                 _logger.LogInformation("Encrypted email saved successfully");
 
-                return Ok(new 
-                { 
-                    message = "Email received, validated, encrypted, and saved successfully", 
+                return Ok(new
+                {
+                    message = "Email received, validated, encrypted, and saved successfully",
                     file = filename,
                     from = email.GetFromEmail(),
                     subject = email.Subject,
@@ -272,7 +272,7 @@ namespace Theatre_TimeLine.Controllers
             bool encryptionEnabled = _configuration.GetValue<bool>("SendGrid:EnableEncryption", true);
             bool requireIpValidation = _configuration.GetValue<bool>("SendGrid:RequireIpValidation", false);
             bool requireAuthValidation = _configuration.GetValue<bool>("SendGrid:RequireAuthValidation", false);
-            
+
             // Convert absolute path to app-relative path for security
             string appBasePath = AppDomain.CurrentDomain.BaseDirectory;
             string relativePath = _emailStoragePath.StartsWith(appBasePath)
@@ -308,7 +308,7 @@ namespace Theatre_TimeLine.Controllers
 
             // Remove newlines, tabs, and control characters that could be used for log injection
             var sanitized = LogSanitizationRegex().Replace(input, " ");
-            
+
             // Truncate to reasonable length to prevent log flooding
             const int maxLogLength = 200;
             if (sanitized.Length > maxLogLength)
