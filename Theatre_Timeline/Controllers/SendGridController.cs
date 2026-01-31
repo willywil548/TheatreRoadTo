@@ -161,8 +161,9 @@ namespace Theatre_TimeLine.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing inbound email from SendGrid");
-                return StatusCode(500, new { error = "Failed to process email", details = ex.Message });
+                var errorId = Guid.NewGuid().ToString();
+                _logger.LogError(ex, "Error processing inbound email from SendGrid. ErrorId: {ErrorId}", errorId);
+                return StatusCode(500, new { error = "Failed to process email", errorId });
             }
         }
 
@@ -237,8 +238,9 @@ namespace Theatre_TimeLine.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving email");
-                return StatusCode(500, new { error = "Failed to retrieve email", details = ex.Message });
+                var errorId = Guid.NewGuid().ToString();
+                _logger.LogError(ex, "Error retrieving email. ErrorId: {ErrorId}", errorId);
+                return StatusCode(500, new { error = "Failed to retrieve email", errorId });
             }
         }
 
@@ -274,8 +276,9 @@ namespace Theatre_TimeLine.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error listing emails");
-                return StatusCode(500, new { error = "Failed to list emails", details = ex.Message });
+                var errorId = Guid.NewGuid().ToString();
+                _logger.LogError(ex, "Error listing emails. ErrorId: {ErrorId}", errorId);
+                return StatusCode(500, new { error = "Failed to list emails", errorId });
             }
         }
 
