@@ -45,6 +45,11 @@ namespace Theatre_TimeLine.Services
         private readonly IDataProtector _protector;
         private readonly ILogger<EmailEncryptionService> _logger;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="EmailEncryptionService"/> class.
+        /// </summary>
+        /// <param name="dataProtectionProvider">The data protection provider.</param>
+        /// <param name="logger">The logger instance.</param>
         public EmailEncryptionService(
             IDataProtectionProvider dataProtectionProvider,
             ILogger<EmailEncryptionService> logger)
@@ -54,6 +59,7 @@ namespace Theatre_TimeLine.Services
             _logger = logger;
         }
 
+        /// <inheritdoc />
         public string Encrypt(string plaintext)
         {
             if (string.IsNullOrEmpty(plaintext))
@@ -73,6 +79,7 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <inheritdoc />
         public string Decrypt(string encryptedData)
         {
             if (string.IsNullOrEmpty(encryptedData))
@@ -93,6 +100,7 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <inheritdoc />
         public async Task WriteEncryptedFileAsync(string filePath, string data)
         {
             try
@@ -108,6 +116,7 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <inheritdoc />
         public async Task<string> ReadEncryptedFileAsync(string filePath)
         {
             try

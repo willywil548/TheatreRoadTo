@@ -20,16 +20,38 @@ namespace Theatre_TimeLine.Services
     /// </summary>
     public class WebhookValidationResult
     {
+        /// <summary>
+        /// Gets or sets whether the validation passed.
+        /// </summary>
         public bool IsValid { get; set; }
+
+        /// <summary>
+        /// Gets or sets the reason for validation failure, if any.
+        /// </summary>
         public string? Reason { get; set; }
+
+        /// <summary>
+        /// Gets or sets the captured webhook headers.
+        /// </summary>
         public WebhookHeaders? Headers { get; set; }
 
+        /// <summary>
+        /// Creates a successful validation result.
+        /// </summary>
+        /// <param name="headers">Optional captured headers.</param>
+        /// <returns>A successful <see cref="WebhookValidationResult"/>.</returns>
         public static WebhookValidationResult Success(WebhookHeaders? headers = null) => new()
         {
             IsValid = true,
             Headers = headers
         };
 
+        /// <summary>
+        /// Creates a failed validation result.
+        /// </summary>
+        /// <param name="reason">The reason for failure.</param>
+        /// <param name="headers">Optional captured headers.</param>
+        /// <returns>A failed <see cref="WebhookValidationResult"/>.</returns>
         public static WebhookValidationResult Failure(string reason, WebhookHeaders? headers = null) => new()
         {
             IsValid = false,
@@ -45,73 +67,133 @@ namespace Theatre_TimeLine.Services
     {
         // === Twilio/SendGrid Event Headers ===
 
+        /// <summary>
+        /// Gets or sets the Twilio webhook signature header.
+        /// </summary>
         [JsonPropertyName("twilioSignature")]
         public string? TwilioSignature { get; set; }
 
+        /// <summary>
+        /// Gets or sets the Twilio webhook timestamp header.
+        /// </summary>
         [JsonPropertyName("twilioTimestamp")]
         public string? TwilioTimestamp { get; set; }
 
         // === SendGrid Specific Headers ===
 
+        /// <summary>
+        /// Gets or sets the SendGrid event ID header (X-SG-EID).
+        /// </summary>
         [JsonPropertyName("sgEventId")]
         public string? SendGridEventId { get; set; }
 
+        /// <summary>
+        /// Gets or sets the SendGrid ID header (X-SG-ID).
+        /// </summary>
         [JsonPropertyName("sgId")]
         public string? SendGridId { get; set; }
 
+        /// <summary>
+        /// Gets or sets the SendGrid message ID header (X-SG-Message-ID).
+        /// </summary>
         [JsonPropertyName("sgMessageId")]
         public string? SendGridMessageId { get; set; }
 
+        /// <summary>
+        /// Gets or sets the SendGrid content type header (X-SG-Content-Type).
+        /// </summary>
         [JsonPropertyName("sgContentType")]
         public string? SendGridContentType { get; set; }
 
         // === Network/Request Headers ===
 
+        /// <summary>
+        /// Gets or sets the resolved client IP address.
+        /// </summary>
         [JsonPropertyName("clientIp")]
         public string? ClientIp { get; set; }
 
+        /// <summary>
+        /// Gets or sets the X-Forwarded-For header value.
+        /// </summary>
         [JsonPropertyName("forwardedFor")]
         public string? ForwardedFor { get; set; }
 
+        /// <summary>
+        /// Gets or sets the X-Forwarded-Proto header value.
+        /// </summary>
         [JsonPropertyName("forwardedProto")]
         public string? ForwardedProto { get; set; }
 
+        /// <summary>
+        /// Gets or sets the X-Forwarded-Host header value.
+        /// </summary>
         [JsonPropertyName("forwardedHost")]
         public string? ForwardedHost { get; set; }
 
+        /// <summary>
+        /// Gets or sets the X-Real-IP header value.
+        /// </summary>
         [JsonPropertyName("realIp")]
         public string? RealIp { get; set; }
 
         // === Standard HTTP Headers ===
 
+        /// <summary>
+        /// Gets or sets the User-Agent header value.
+        /// </summary>
         [JsonPropertyName("userAgent")]
         public string? UserAgent { get; set; }
 
+        /// <summary>
+        /// Gets or sets the Content-Type header value.
+        /// </summary>
         [JsonPropertyName("contentType")]
         public string? ContentType { get; set; }
 
+        /// <summary>
+        /// Gets or sets the Content-Length header value.
+        /// </summary>
         [JsonPropertyName("contentLength")]
         public string? ContentLength { get; set; }
 
+        /// <summary>
+        /// Gets or sets the Host header value.
+        /// </summary>
         [JsonPropertyName("host")]
         public string? Host { get; set; }
 
+        /// <summary>
+        /// Gets or sets the Accept header value.
+        /// </summary>
         [JsonPropertyName("accept")]
         public string? Accept { get; set; }
 
         // === All Other Headers (for discovery) ===
 
+        /// <summary>
+        /// Gets or sets all captured headers as a dictionary for discovery and debugging.
+        /// </summary>
         [JsonPropertyName("allHeaders")]
         public Dictionary<string, string>? AllHeaders { get; set; }
 
         // === Metadata ===
 
+        /// <summary>
+        /// Gets or sets the UTC timestamp when headers were captured.
+        /// </summary>
         [JsonPropertyName("capturedAt")]
         public DateTime CapturedAt { get; set; } = DateTime.UtcNow;
 
+        /// <summary>
+        /// Gets or sets the request path.
+        /// </summary>
         [JsonPropertyName("requestPath")]
         public string? RequestPath { get; set; }
 
+        /// <summary>
+        /// Gets or sets the HTTP request method.
+        /// </summary>
         [JsonPropertyName("requestMethod")]
         public string? RequestMethod { get; set; }
     }
@@ -124,6 +206,11 @@ namespace Theatre_TimeLine.Services
         private readonly ILogger<SendGridWebhookValidator> _logger;
         private readonly IHostEnvironment _environment;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SendGridWebhookValidator"/> class.
+        /// </summary>
+        /// <param name="logger">The logger instance.</param>
+        /// <param name="environment">The host environment for determining development mode.</param>
         public SendGridWebhookValidator(
             ILogger<SendGridWebhookValidator> logger,
             IHostEnvironment environment)
@@ -132,6 +219,7 @@ namespace Theatre_TimeLine.Services
             _environment = environment;
         }
 
+        /// <inheritdoc />
         public Task<WebhookValidationResult> ValidateRequestAsync(HttpContext context)
         {
             // Capture all headers

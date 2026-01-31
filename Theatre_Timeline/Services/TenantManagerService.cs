@@ -10,7 +10,11 @@ namespace Theatre_TimeLine.Services
     /// </summary>
     internal sealed class TenantManagerService : ITenantManagerService
     {
+        /// <summary>
+        /// The GUID used for the demo tenant.
+        /// </summary>
         public const string DemoGuid = "00000000-0000-0000-0000-3eca75185852";
+
         private const string HomeVariable = "%home%";
         private static readonly SemaphoreSlim writeManager = new(1, 1);
         private const string configurationKey = "TenantManager:DataPath";
@@ -19,9 +23,9 @@ namespace Theatre_TimeLine.Services
         private readonly ISecurityGroupService? _securityGroups;
 
         /// <summary>
-        /// Initializes a new instance of <see cref="TenantManagerService"/>
+        /// Initializes a new instance of <see cref="TenantManagerService"/>.
         /// </summary>
-        /// <param name="configuration"></param>
+        /// <param name="configuration">The application configuration.</param>
         /// <param name="securityGroups">Optional: security group service to ensure groups upon tenant/road creation.</param>
         public TenantManagerService(IConfiguration configuration, ISecurityGroupService? securityGroups = null)
         {
@@ -58,6 +62,7 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <inheritdoc />
         public void CreateTenant(ITenantContainer tenant)
         {
             FileInfo tenantConfigurationFileInfo = new(
@@ -81,6 +86,7 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <inheritdoc />
         public void RemoveTenant(Guid guid)
         {
             DirectoryInfo tenantDirectory = new(this.GetTenantRootPath(guid));
@@ -90,6 +96,7 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <inheritdoc />
         public void SaveRoad(IRoadToThere? roadToThere)
         {
             if (roadToThere == null)
@@ -106,11 +113,13 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <inheritdoc />
         public void RemoveRoad(Guid roadId)
         {
             this.ActionRoad(roadId, tenant => tenant.RemoveRoad(roadId));
         }
 
+        /// <inheritdoc />
         public IRoadToThere GetRoad(Guid roadId)
         {
             ITenantContainer? tenant = this.GetTenant(roadId);
@@ -123,6 +132,7 @@ namespace Theatre_TimeLine.Services
                 ?? throw new InvalidOperationException("Road not found.");
         }
 
+        /// <inheritdoc />
         public ITenantContainer? GetTenant(Guid guid)
         {
             ITenantContainer[] tenantContainers = this.GetTenants();
@@ -130,6 +140,7 @@ namespace Theatre_TimeLine.Services
                 ?? tenantContainers.FirstOrDefault(c => c.Roads.Any(r => r.RoadId.Equals(guid)));
         }
 
+        /// <inheritdoc />
         public ITenantContainer[] GetTenants()
         {
             List<ITenantContainer> containers = [];
@@ -162,6 +173,11 @@ namespace Theatre_TimeLine.Services
             return [.. containers];
         }
 
+        /// <summary>
+        /// Performs an action on a road within a tenant context with thread safety.
+        /// </summary>
+        /// <param name="tenantId">The tenant ID.</param>
+        /// <param name="action">The action to perform on the tenant container.</param>
         private void ActionRoad(Guid tenantId, Action<ITenantContainer> action)
         {
             writeManager.Wait();
@@ -181,6 +197,9 @@ namespace Theatre_TimeLine.Services
             }
         }
 
+        /// <summary>
+        /// Creates the demo page and tenant for first-time setup.
+        /// </summary>
         private void CreateDemoPage()
         {
             // Setup the Demo.
@@ -208,6 +227,7 @@ namespace Theatre_TimeLine.Services
             this.SaveRoad(roadToThere);
         }
 
+        /// <inheritdoc />
         public string GetTenantRootPath(Guid tenantId)
         {
             return Path.Combine(this.dataPath, tenantId.ToString());
