@@ -75,7 +75,7 @@ namespace Theatre_TimeLine.Controllers
         [HttpPost("inbound")]
         [AllowAnonymous]  // SendGrid webhooks need anonymous access
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> ReceiveInboundEmail()
+        public async Task<IActionResult> ReceiveInboundEmail([FromForm] SendGridInboundEmail email)
         {
             try
             {
@@ -93,47 +93,22 @@ namespace Theatre_TimeLine.Controllers
                 _logger.LogInformation("Webhook validation passed. Headers captured: {HasHeaders}", 
                     validationResult.Headers != null);
 
-                // Read all form data from SendGrid
-                var form = await Request.ReadFormAsync();
-                
-                // Parse into strongly-typed model
-                var email = new SendGridInboundEmail
-                {
-                    RawEmail = form["email"].ToString(),
-                    Charsets = form["charsets"].ToString(),
-                    Dkim = form["dkim"].ToString(),
-                    SpamScore = form["spam_score"].ToString(),
-                    SpamReport = form["spam_report"].ToString(),
-                    To = form["to"].ToString(),
-                    From = form["from"].ToString(),
-                    Subject = form["subject"].ToString(),
-                    Envelope = form["envelope"].ToString(),
-                    SenderIp = form["sender_ip"].ToString(),
-                    Spf = form["SPF"].ToString(),
-                    Text = form["text"].ToString(),
-                    Html = form["html"].ToString(),
-                    Cc = form["cc"].ToString(),
-                    AttachmentCount = form["attachments"].ToString(),
-                    AttachmentInfo = form["attachment-info"].ToString(),
-                    ReceivedAt = DateTime.UtcNow.ToString("O"),
-                    Encrypted = true,
-                    ValidatedSource = validationResult.IsValid,
-                    WebhookHeaders = validationResult.Headers
-                };
+                // Set metadata fields (not bound from form)
+                email.ReceivedAt = DateTime.UtcNow.ToString("O");
+                email.Encrypted = true;
+                email.ValidatedSource = validationResult.IsValid;
+                email.WebhookHeaders = validationResult.Headers;
 
                 // Handle file attachments if present
+                var form = await Request.ReadFormAsync();
                 if (form.Files.Count > 0)
                 {
-                    email.Attachments = new List<EmailAttachment>();
-                    foreach (var file in form.Files)
+                    email.Attachments = form.Files.Select(file => new EmailAttachment
                     {
-                        email.Attachments.Add(new EmailAttachment
-                        {
-                            Filename = file.FileName,
-                            ContentType = file.ContentType,
-                            Length = file.Length
-                        });
-                    }
+                        Filename = file.FileName,
+                        ContentType = file.ContentType,
+                        Length = file.Length
+                    }).ToList();
                 }
 
                 // Log parsed email info (sanitized to prevent log injection)

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using MimeKit;
 using Theatre_TimeLine.Services;
 
@@ -9,6 +11,7 @@ namespace Theatre_TimeLine.Models
     /// <summary>
     /// Represents an inbound email received from SendGrid Inbound Parse webhook.
     /// Maps to the multipart/form-data fields sent by SendGrid.
+    /// Supports both form binding (via BindProperty) and JSON serialization (via JsonPropertyName).
     /// </summary>
     public class SendGridInboundEmail
     {
@@ -18,6 +21,7 @@ namespace Theatre_TimeLine.Models
         /// The raw email content including all headers and MIME parts.
         /// This is the complete email as received by SendGrid.
         /// </summary>
+        [BindProperty(Name = "email")]
         [JsonPropertyName("email")]
         public string? RawEmail { get; set; }
 
@@ -25,6 +29,7 @@ namespace Theatre_TimeLine.Models
         /// Character sets used in the email as JSON string.
         /// Example: {"to":"UTF-8","from":"UTF-8","subject":"UTF-8"}
         /// </summary>
+        [BindProperty(Name = "charsets")]
         [JsonPropertyName("charsets")]
         public string? Charsets { get; set; }
 
@@ -32,6 +37,7 @@ namespace Theatre_TimeLine.Models
         /// The DKIM verification result.
         /// Example: "{@outlook.com : pass}"
         /// </summary>
+        [BindProperty(Name = "dkim")]
         [JsonPropertyName("dkim")]
         public string? Dkim { get; set; }
 
@@ -39,12 +45,14 @@ namespace Theatre_TimeLine.Models
         /// The spam score from SpamAssassin.
         /// Lower is better. Typically spam if > 5.
         /// </summary>
+        [BindProperty(Name = "spam_score")]
         [JsonPropertyName("spam_score")]
         public string? SpamScore { get; set; }
 
         /// <summary>
         /// The spam report from SpamAssassin with detailed analysis.
         /// </summary>
+        [BindProperty(Name = "spam_report")]
         [JsonPropertyName("spam_report")]
         public string? SpamReport { get; set; }
 
@@ -52,6 +60,7 @@ namespace Theatre_TimeLine.Models
         /// The email address the email was sent to.
         /// Example: "test@your.domain.com" <test@your.domain.com>
         /// </summary>
+        [BindProperty(Name = "to")]
         [JsonPropertyName("to")]
         public string? To { get; set; }
 
@@ -59,12 +68,14 @@ namespace Theatre_TimeLine.Models
         /// The sender's email address with display name.
         /// Example: "Robert Wilson <robert.p.wilson@outlook.com>"
         /// </summary>
+        [BindProperty(Name = "from")]
         [JsonPropertyName("from")]
         public string? From { get; set; }
 
         /// <summary>
         /// The email subject line.
         /// </summary>
+        [BindProperty(Name = "subject")]
         [JsonPropertyName("subject")]
         public string? Subject { get; set; }
 
@@ -72,12 +83,14 @@ namespace Theatre_TimeLine.Models
         /// The SMTP envelope information as JSON string.
         /// Contains "to" array and "from" string.
         /// </summary>
+        [BindProperty(Name = "envelope")]
         [JsonPropertyName("envelope")]
         public string? Envelope { get; set; }
 
         /// <summary>
         /// The IP address of the sender's mail server.
         /// </summary>
+        [BindProperty(Name = "sender_ip")]
         [JsonPropertyName("sender_ip")]
         public string? SenderIp { get; set; }
 
@@ -85,6 +98,7 @@ namespace Theatre_TimeLine.Models
         /// SPF (Sender Policy Framework) verification result.
         /// Values: "pass", "fail", "softfail", "neutral", "none"
         /// </summary>
+        [BindProperty(Name = "SPF")]
         [JsonPropertyName("SPF")]
         public string? Spf { get; set; }
 
@@ -93,68 +107,79 @@ namespace Theatre_TimeLine.Models
         /// <summary>
         /// The plain text body of the email (if sent separately by SendGrid config).
         /// </summary>
+        [BindProperty(Name = "text")]
         [JsonPropertyName("text")]
         public string? Text { get; set; }
 
         /// <summary>
         /// The HTML body of the email (if sent separately by SendGrid config).
         /// </summary>
+        [BindProperty(Name = "html")]
         [JsonPropertyName("html")]
         public string? Html { get; set; }
 
         /// <summary>
         /// CC recipients (if any).
         /// </summary>
+        [BindProperty(Name = "cc")]
         [JsonPropertyName("cc")]
         public string? Cc { get; set; }
 
         /// <summary>
         /// Number of attachments as string.
         /// </summary>
+        [BindProperty(Name = "attachments")]
         [JsonPropertyName("attachments")]
         public string? AttachmentCount { get; set; }
 
         /// <summary>
         /// Attachment metadata as JSON string.
         /// </summary>
+        [BindProperty(Name = "attachment-info")]
         [JsonPropertyName("attachment-info")]
         public string? AttachmentInfo { get; set; }
 
-        // === Metadata added by our system ===
+        // === Metadata added by our system (not bound from form) ===
 
         /// <summary>
         /// UTC timestamp when the email was received by our system.
         /// </summary>
+        [BindNever]
         [JsonPropertyName("receivedAt")]
         public string? ReceivedAt { get; set; }
 
         /// <summary>
         /// Indicates if the email was stored encrypted.
         /// </summary>
+        [BindNever]
         [JsonPropertyName("encrypted")]
         public bool Encrypted { get; set; }
 
         /// <summary>
         /// The filename where the email is stored.
         /// </summary>
+        [BindNever]
         [JsonPropertyName("storedAs")]
         public string? StoredAs { get; set; }
 
         /// <summary>
         /// Whether the email passed webhook validation.
         /// </summary>
+        [BindNever]
         [JsonPropertyName("validatedSource")]
         public bool ValidatedSource { get; set; }
 
         /// <summary>
         /// Captured webhook headers for audit/debugging.
         /// </summary>
+        [BindNever]
         [JsonPropertyName("webhookHeaders")]
         public WebhookHeaders? WebhookHeaders { get; set; }
 
         /// <summary>
         /// List of attachment metadata (populated during processing).
         /// </summary>
+        [BindNever]
         [JsonPropertyName("attachmentsList")]
         public List<EmailAttachment>? Attachments { get; set; }
 
