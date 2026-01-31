@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Models;
 using Theatre_TimeLine.Services;
@@ -12,8 +13,12 @@ namespace Theatre_TimeLine.Controllers
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
-    public class SendGridController : ControllerBase
+    public partial class SendGridController : ControllerBase
     {
+        // Regex to sanitize log input - removes newlines and control characters to prevent log injection
+        [GeneratedRegex(@"[\r\n\t\x00-\x1F\x7F]", RegexOptions.Compiled)]
+        private static partial Regex LogSanitizationRegex();
+
         private readonly ILogger<SendGridController> _logger;
         private readonly IConfiguration _configuration;
         private readonly IEmailEncryptionService _encryptionService;
@@ -22,7 +27,7 @@ namespace Theatre_TimeLine.Controllers
         private readonly string _emailStoragePath;
 
         public SendGridController(
-            ILogger<SendGridController> logger, 
+            ILogger<SendGridController> logger,
             IConfiguration configuration,
             IEmailEncryptionService encryptionService,
             ISecurityGroupService securityGroupService,
@@ -81,7 +86,7 @@ namespace Theatre_TimeLine.Controllers
                 
                 if (!validationResult.IsValid)
                 {
-                    _logger.LogWarning("Webhook validation failed: {Reason}", validationResult.Reason);
+                    _logger.LogWarning("Webhook validation failed: {Reason}", SanitizeForLog(validationResult.Reason));
                     return Unauthorized(new { error = "Invalid webhook source", reason = validationResult.Reason });
                 }
 
@@ -131,9 +136,11 @@ namespace Theatre_TimeLine.Controllers
                     }
                 }
 
-                // Log parsed email info
+                // Log parsed email info (sanitized to prevent log injection)
                 _logger.LogInformation("Parsed email - From: {From}, To: {To}, Subject: {Subject}",
-                    email.GetFromEmail(), email.GetToEmail(), email.Subject);
+                    SanitizeForLog(email.GetFromEmail()), 
+                    SanitizeForLog(email.GetToEmail()), 
+                    SanitizeForLog(email.Subject));
                 _logger.LogInformation("Email validation - DKIM: {Dkim}, SPF: {Spf}, Spam Score: {SpamScore}",
                     email.IsDkimValid(), email.IsSpfValid(), email.GetSpamScoreValue());
 
@@ -165,7 +172,7 @@ namespace Theatre_TimeLine.Controllers
                 // Encrypt and write to disk
                 await _encryptionService.WriteEncryptedFileAsync(filePath, jsonContent);
 
-                _logger.LogInformation("Encrypted email saved to: {FilePath}", filePath);
+                _logger.LogInformation("Encrypted email saved successfully");
 
                 return Ok(new 
                 { 
@@ -197,7 +204,7 @@ namespace Theatre_TimeLine.Controllers
             // Check if user is Global Admin
             if (!await IsGlobalAdminAsync())
             {
-                _logger.LogWarning("Unauthorized access attempt to email by user: {User}", User.GetEmail());
+                _logger.LogWarning("Unauthorized access attempt to email by user");
                 return Forbid();
             }
 
@@ -216,7 +223,7 @@ namespace Theatre_TimeLine.Controllers
                 var decryptedContent = await _encryptionService.ReadEncryptedFileAsync(filePath);
                 var email = JsonSerializer.Deserialize<SendGridInboundEmail>(decryptedContent);
 
-                _logger.LogInformation("Retrieved and decrypted email: {Filename}", safeFilename);
+                _logger.LogInformation("Retrieved and decrypted email successfully");
 
                 // Return with parsed body content for convenience
                 return Ok(new
@@ -237,7 +244,7 @@ namespace Theatre_TimeLine.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving email: {Filename}", filename);
+                _logger.LogError(ex, "Error retrieving email");
                 return StatusCode(500, new { error = "Failed to retrieve email", details = ex.Message });
             }
         }
@@ -254,7 +261,7 @@ namespace Theatre_TimeLine.Controllers
             // Check if user is Global Admin
             if (!await IsGlobalAdminAsync())
             {
-                _logger.LogWarning("Unauthorized access attempt to email list by user: {User}", User.GetEmail());
+                _logger.LogWarning("Unauthorized access attempt to email list");
                 return Forbid();
             }
 
@@ -294,23 +301,50 @@ namespace Theatre_TimeLine.Controllers
             // Convert absolute path to app-relative path for security
             string appBasePath = AppDomain.CurrentDomain.BaseDirectory;
             string relativePath = _emailStoragePath.StartsWith(appBasePath)
-                ? _emailStoragePath.Substring(appBasePath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                ? _emailStoragePath.Substring(appBasePath.Length)
+                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                 : Path.GetFileName(_emailStoragePath);
-            
-            return Ok(new 
-            { 
-                status = "healthy",
-                storagePath = relativePath,
-                encryption = encryptionEnabled ? "enabled" : "disabled",
-                validation = new
+
+            return Ok(
+                new
                 {
-                    ipRequired = requireIpValidation,
-                    authRequired = requireAuthValidation
-                },
-                timestamp = DateTime.UtcNow
-            });
+                    status = "healthy",
+                    storagePath = relativePath,
+                    encryption = encryptionEnabled ? "enabled" : "disabled",
+                    validation = new
+                    {
+                        ipRequired = requireIpValidation,
+                        authRequired = requireAuthValidation
+                    },
+                    timestamp = DateTime.UtcNow
+                });
         }
 
+        /// <summary>
+        /// Sanitizes a string for safe logging by removing newlines and control characters.
+        /// This prevents log injection attacks.
+        /// </summary>
+        private static string SanitizeForLog(string? input)
+        {
+            if (string.IsNullOrEmpty(input))
+            {
+                return string.Empty;
+            }
+
+            // Remove newlines, tabs, and control characters that could be used for log injection
+            var sanitized = LogSanitizationRegex().Replace(input, " ");
+            
+            // Truncate to reasonable length to prevent log flooding
+            const int maxLogLength = 200;
+            if (sanitized.Length > maxLogLength)
+            {
+                sanitized = string.Concat(sanitized.AsSpan(0, maxLogLength), "...");
+            }
+
+            return sanitized;
+        }
+
+#pragma warning disable CA1822 // Mark members as static - method accesses instance members via User property
         /// <summary>
         /// Checks if the current user is a member of the Global Admin (Roads-Admin) group.
         /// </summary>
@@ -331,5 +365,6 @@ namespace Theatre_TimeLine.Controllers
                 userEmail,
                 SecurityGroupNameBuilder.GlobalAdminsGroup);
         }
+#pragma warning restore CA1822
     }
 }
