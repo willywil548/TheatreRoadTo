@@ -130,7 +130,7 @@ namespace Theatre_TimeLine.Controllers
                 string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
                 string fromEmail = email.GetFromEmail()?.Replace("@", "_at_") ?? "unknown";
                 string sanitizedFrom = string.Join("_", fromEmail.Split(Path.GetInvalidFileNameChars()));
-                string filename = $"email_{timestamp}_{sanitizedFrom}.enc";
+                string filename = $"email_{timestamp}_{sanitizedFrom}_{Guid.NewGuid()}.enc";
                 string filePath = Path.Combine(_emailStoragePath, filename);
 
                 // Store the filename in the model
