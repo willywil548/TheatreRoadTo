@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using MimeKit;
 using Theatre_TimeLine.Services;
 
 namespace Theatre_TimeLine.Models
@@ -11,6 +12,8 @@ namespace Theatre_TimeLine.Models
     /// </summary>
     public class SendGridInboundEmail
     {
+        private static readonly Regex addressEmailRegex = new(@"<([^>]+)>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         /// <summary>
         /// The raw email content including all headers and MIME parts.
         /// This is the complete email as received by SendGrid.
@@ -47,7 +50,7 @@ namespace Theatre_TimeLine.Models
 
         /// <summary>
         /// The email address the email was sent to.
-        /// Example: "test@notifications.roadstothere.com" <test@notifications.roadstothere.com>
+        /// Example: "test@your.domain.com" <test@your.domain.com>
         /// </summary>
         [JsonPropertyName("to")]
         public string? To { get; set; }
@@ -162,18 +165,20 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public string? GetFromEmail()
         {
-            if (string.IsNullOrEmpty(From))
+            if (string.IsNullOrEmpty(this.From))
+            {
                 return null;
+            }
 
             // Handle format: "Display Name <email@domain.com>"
-            var match = Regex.Match(From, @"<([^>]+)>");
+            var match = addressEmailRegex.Match(this.From);
             if (match.Success)
             {
                 return match.Groups[1].Value.Trim();
             }
 
             // Already just an email address
-            return From.Trim();
+            return this.From.Trim();
         }
 
         /// <summary>
@@ -181,13 +186,15 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public string? GetFromDisplayName()
         {
-            if (string.IsNullOrEmpty(From))
+            if (string.IsNullOrEmpty(this.From))
+            {
                 return null;
+            }
 
-            var startIndex = From.IndexOf('<');
+            var startIndex = this.From.IndexOf('<');
             if (startIndex > 0)
             {
-                return From.Substring(0, startIndex).Trim().Trim('"');
+                return From[..startIndex].Trim().Trim('"');
             }
 
             return null;
@@ -198,16 +205,18 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public string? GetToEmail()
         {
-            if (string.IsNullOrEmpty(To))
+            if (string.IsNullOrEmpty(this.To))
+            {
                 return null;
+            }
 
-            var match = Regex.Match(To, @"<([^>]+)>");
+            var match = addressEmailRegex.Match(this.To);
             if (match.Success)
             {
                 return match.Groups[1].Value.Trim();
             }
 
-            return To.Trim().Trim('"');
+            return this.To.Trim().Trim('"');
         }
 
         /// <summary>
@@ -215,8 +224,11 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public double GetSpamScoreValue()
         {
-            if (double.TryParse(SpamScore, out var score))
+            if (double.TryParse(this.SpamScore, out var score))
+            {
                 return score;
+            }
+
             return 0;
         }
 
@@ -233,8 +245,8 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public bool IsDkimValid()
         {
-            return !string.IsNullOrEmpty(Dkim) && 
-                   Dkim.Contains("pass", StringComparison.OrdinalIgnoreCase);
+            return !string.IsNullOrEmpty(this.Dkim) &&
+                   this.Dkim.Contains("pass", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -242,7 +254,7 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public bool IsSpfValid()
         {
-            return string.Equals(Spf, "pass", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(this.Spf, "pass", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -251,11 +263,13 @@ namespace Theatre_TimeLine.Models
         public string? GetTextBody()
         {
             // If text field is populated, use it
-            if (!string.IsNullOrEmpty(Text))
-                return Text;
+            if (!string.IsNullOrEmpty(this.Text))
+            {
+                return this.Text;
+            }
 
-            // Otherwise parse from raw email
-            return ExtractBodyFromRawEmail("text/plain");
+            // Otherwise parse from raw email using MimeKit
+            return ExtractBodyFromRawEmail(isHtml: false);
         }
 
         /// <summary>
@@ -264,11 +278,13 @@ namespace Theatre_TimeLine.Models
         public string? GetHtmlBody()
         {
             // If html field is populated, use it
-            if (!string.IsNullOrEmpty(Html))
-                return Html;
+            if (!string.IsNullOrEmpty(this.Html))
+            {
+                return this.Html;
+            }
 
-            // Otherwise parse from raw email
-            return ExtractBodyFromRawEmail("text/html");
+            // Otherwise parse from raw email using MimeKit
+            return ExtractBodyFromRawEmail(isHtml: true);
         }
 
         /// <summary>
@@ -278,11 +294,15 @@ namespace Theatre_TimeLine.Models
         {
             var text = GetTextBody();
             if (!string.IsNullOrEmpty(text))
+            {
                 return text;
+            }
 
             var html = GetHtmlBody();
             if (!string.IsNullOrEmpty(html))
+            {
                 return StripHtmlTags(html);
+            }
 
             return null;
         }
@@ -292,12 +312,14 @@ namespace Theatre_TimeLine.Models
         /// </summary>
         public SendGridEnvelope? GetEnvelope()
         {
-            if (string.IsNullOrEmpty(Envelope))
+            if (string.IsNullOrEmpty(this.Envelope))
+            {
                 return null;
+            }
 
             try
             {
-                return JsonSerializer.Deserialize<SendGridEnvelope>(Envelope);
+                return JsonSerializer.Deserialize<SendGridEnvelope>(this.Envelope);
             }
             catch
             {
@@ -306,101 +328,38 @@ namespace Theatre_TimeLine.Models
         }
 
         /// <summary>
-        /// Extracts body content from raw MIME email by content type.
+        /// Parses the raw email and returns a MimeMessage for advanced processing.
         /// </summary>
-        private string? ExtractBodyFromRawEmail(string contentType)
+        public MimeMessage? GetParsedMessage()
         {
-            if (string.IsNullOrEmpty(RawEmail))
+            if (string.IsNullOrEmpty(this.RawEmail))
+            {
                 return null;
+            }
 
             try
             {
-                // Find the boundary
-                var boundaryMatch = Regex.Match(RawEmail, @"boundary=""([^""]+)""");
-                if (!boundaryMatch.Success)
-                    return null;
-
-                var boundary = boundaryMatch.Groups[1].Value;
-
-                // Split by boundary
-                var parts = RawEmail.Split(new[] { "--" + boundary }, StringSplitOptions.RemoveEmptyEntries);
-
-                foreach (var part in parts)
-                {
-                    if (part.Contains($"Content-Type: {contentType}", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Find the blank line that separates headers from body
-                        var headerEndIndex = part.IndexOf("\r\n\r\n");
-                        if (headerEndIndex < 0)
-                            headerEndIndex = part.IndexOf("\n\n");
-
-                        if (headerEndIndex > 0)
-                        {
-                            var headerSection = part.Substring(0, headerEndIndex);
-                            var body = part.Substring(headerEndIndex).Trim();
-                            
-                            // Clean up boundary markers at the end
-                            var endBoundary = body.IndexOf("--_");
-                            if (endBoundary > 0)
-                                body = body.Substring(0, endBoundary);
-
-                            // Handle different transfer encodings
-                            if (headerSection.Contains("base64", StringComparison.OrdinalIgnoreCase))
-                            {
-                                body = DecodeBase64(body);
-                            }
-                            else if (headerSection.Contains("quoted-printable", StringComparison.OrdinalIgnoreCase))
-                            {
-                                body = DecodeQuotedPrintable(body);
-                            }
-
-                            return body.Trim();
-                        }
-                    }
-                }
+                using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(this.RawEmail));
+                return MimeMessage.Load(stream);
             }
             catch
             {
-                // If parsing fails, return null
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Decodes base64 encoded text.
-        /// </summary>
-        private static string DecodeBase64(string input)
-        {
-            try
-            {
-                // Remove whitespace/newlines that may be in the base64 string
-                var cleanBase64 = Regex.Replace(input, @"\s+", "");
-                var bytes = Convert.FromBase64String(cleanBase64);
-                return System.Text.Encoding.UTF8.GetString(bytes);
-            }
-            catch
-            {
-                // If base64 decode fails, return the original
-                return input;
+                return null;
             }
         }
 
         /// <summary>
-        /// Decodes quoted-printable encoded text.
+        /// Extracts body content from raw MIME email using MimeKit.
         /// </summary>
-        private static string DecodeQuotedPrintable(string input)
+        private string? ExtractBodyFromRawEmail(bool isHtml)
         {
-            // Handle soft line breaks (=\r\n or =\n)
-            input = Regex.Replace(input, @"=\r?\n", "");
-
-            // Decode =XX hex sequences
-            return Regex.Replace(input, @"=([0-9A-Fa-f]{2})", match =>
+            var message = GetParsedMessage();
+            if (message == null)
             {
-                var hex = match.Groups[1].Value;
-                var charCode = Convert.ToInt32(hex, 16);
-                return ((char)charCode).ToString();
-            });
+                return null;
+            }
+
+            return isHtml ? message.HtmlBody : message.TextBody;
         }
 
         /// <summary>
