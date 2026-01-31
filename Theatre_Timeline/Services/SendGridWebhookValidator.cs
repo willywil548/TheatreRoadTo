@@ -122,39 +122,36 @@ namespace Theatre_TimeLine.Services
     public class SendGridWebhookValidator : ISendGridWebhookValidator
     {
         private readonly ILogger<SendGridWebhookValidator> _logger;
-        private readonly IConfiguration _configuration;
+        private readonly IHostEnvironment _environment;
 
         public SendGridWebhookValidator(
             ILogger<SendGridWebhookValidator> logger,
-            IConfiguration configuration)
+            IHostEnvironment environment)
         {
             _logger = logger;
-            _configuration = configuration;
+            _environment = environment;
         }
 
         public Task<WebhookValidationResult> ValidateRequestAsync(HttpContext context)
         {
             // Capture all headers
             var headers = CaptureHeaders(context);
-            
+
             // Log headers for analysis
             LogHeaders(headers);
 
-            // For now, allow all requests but capture everything
-            // We can analyze the headers from saved emails to determine validation strategy
-            var allowDevelopmentBypass = _configuration.GetValue<bool>("SendGrid:AllowDevelopmentBypass", true);
-            
-            if (allowDevelopmentBypass)
+            // In development, allow all requests but capture everything for analysis
+            if (_environment.IsDevelopment())
             {
-                _logger.LogInformation("Development bypass enabled - accepting request and capturing headers for analysis");
+                _logger.LogInformation("Development environment - accepting request and capturing headers for analysis");
                 return Task.FromResult(WebhookValidationResult.Success(headers));
             }
 
             // Basic validation: check if we have any indication this is from SendGrid
             // For Inbound Parse, SendGrid uses "Sendlib/1.0" as the User-Agent
             bool isSendlibUserAgent = headers.UserAgent?.Contains("Sendlib", StringComparison.OrdinalIgnoreCase) ?? false;
-            
-            bool hasSendGridIndicators = 
+
+            bool hasSendGridIndicators =
                 isSendlibUserAgent ||
                 !string.IsNullOrEmpty(headers.SendGridEventId) ||
                 !string.IsNullOrEmpty(headers.SendGridId) ||
@@ -176,7 +173,7 @@ namespace Theatre_TimeLine.Services
         private WebhookHeaders CaptureHeaders(HttpContext context)
         {
             var requestHeaders = context.Request.Headers;
-            
+
             // Capture all headers into a dictionary
             var allHeaders = new Dictionary<string, string>();
             foreach (var header in requestHeaders)
