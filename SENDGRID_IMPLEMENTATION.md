@@ -1,54 +1,75 @@
-# SendGrid Email Inbound Parse - Implementation Summary
+﻿# SendGrid Email Inbound Parse - Implementation Summary
 
 ## Overview
-Successfully implemented an encrypted email storage system for SendGrid's Inbound Parse webhook. Emails are received, encrypted using ASP.NET Core Data Protection API, and stored to disk for server-side processing.
 
-## Components Created
+This implementation provides a secure email reception system for SendGrid's Inbound Parse webhook. Emails are received, validated, encrypted using ASP.NET Core Data Protection API, and stored to disk. Global Admins can retrieve and list stored emails through authenticated API endpoints.
 
-### 1. Email Encryption Service
-**File**: `Theatre_Timeline/Services/EmailEncryptionService.cs`
+## Components
 
-- Interface: `IEmailEncryptionService`
-- Implementation: `EmailEncryptionService`
-- Uses ASP.NET Core Data Protection API for encryption
-- Provides methods for:
-  - `Encrypt(string plaintext)` - Encrypts data to Base64
-  - `Decrypt(string encryptedData)` - Decrypts from Base64
-  - `WriteEncryptedFileAsync(filePath, data)` - Encrypts and writes to file
-  - `ReadEncryptedFileAsync(filePath)` - Reads and decrypts from file
+### 1. SendGrid Controller
 
-**Key Features**:
-- Automatic key management via Data Protection API
-- Purpose string: `"Theatre_TimeLine.EmailStorage.v1"`
-- Keys stored in machine key ring (or Azure Key Vault if configured)
-
-### 2. SendGrid Controller
 **File**: `Theatre_Timeline/Controllers/SendGridController.cs`
 
 **Endpoints**:
 
 | Method | Endpoint | Purpose | Auth |
 |--------|----------|---------|------|
-| GET | `/api/sendgrid/health` | Health check and status | Anonymous |
 | POST | `/api/sendgrid/inbound` | Receive email from SendGrid | Anonymous |
-
-**Email Processing Flow**:
-1. Receives multipart/form-data from SendGrid
-2. Extracts all form fields (from, to, subject, text, html, headers, etc.)
-3. Handles attachment metadata
-4. Adds timestamp and encryption metadata
-5. Serializes to JSON
-6. Encrypts with Data Protection API
-7. Saves as `.enc` file with naming pattern: `email_{timestamp}_{from}.enc`
+| GET | `/api/sendgrid/email/{filename}` | Retrieve a specific email | Global Admin |
+| GET | `/api/sendgrid/emails` | List all stored emails | Global Admin |
+| GET | `/api/sendgrid/health` | Health check and status | Anonymous |
 
 **Security Features**:
-- `[AllowAnonymous]` attribute (required for SendGrid webhooks)
-- Encrypted storage - emails stored encrypted at rest
-- No public retrieval endpoints - emails only accessible server-side
-- Sanitized filenames
-- App-relative paths in responses (not absolute paths)
+- Webhook validation via `ISendGridWebhookValidator`
+- Development mode bypass using `IHostEnvironment.IsDevelopment()`
+- PII masking in logs (email addresses masked as `u***@e***.com`)
+- Log injection prevention via sanitization
+- Path traversal protection with defense-in-depth validation
+- Correlation IDs for error tracking (no exception details exposed)
+- Global Admin authorization for email retrieval
 
-### 3. Configuration
+### 2. SendGrid Inbound Email Model
+
+**File**: `Theatre_Timeline/Models/SendGridInboundEmail.cs`
+
+**Features**:
+- Strongly-typed model with `[FromForm]` binding support
+- `[BindProperty]` attributes for form field mapping
+- `[BindNever]` for metadata fields to prevent over-posting
+- MimeKit integration for proper MIME parsing
+- Helper methods for extracting email addresses, body content, spam detection
+
+**Key Methods**:
+- `GetFromEmail()` / `GetToEmail()` - Extract email addresses
+- `GetTextBody()` / `GetHtmlBody()` - Get body content (uses MimeKit)
+- `IsDkimValid()` / `IsSpfValid()` - Check email authentication
+- `IsLikelySpam()` - Spam score threshold check
+- `GetParsedMessage()` - Get full MimeKit `MimeMessage` for advanced processing
+
+### 3. Email Encryption Service
+
+**File**: `Theatre_Timeline/Services/EmailEncryptionService.cs`
+
+- Interface: `IEmailEncryptionService`
+- Uses ASP.NET Core Data Protection API
+- Purpose string: `"Theatre_TimeLine.EmailStorage.v1"`
+- Methods:
+  - `Encrypt(string plaintext)` - Encrypts data to Base64
+  - `Decrypt(string encryptedData)` - Decrypts from Base64
+  - `WriteEncryptedFileAsync(filePath, data)` - Encrypts and writes to file
+  - `ReadEncryptedFileAsync(filePath)` - Reads and decrypts from file
+
+### 4. Webhook Validator
+
+**File**: `Theatre_Timeline/Services/SendGridWebhookValidator.cs`
+
+- Interface: `ISendGridWebhookValidator`
+- Captures all request headers for audit/debugging
+- Development mode: Accepts all requests (uses `IHostEnvironment.IsDevelopment()`)
+- Production mode: Validates SendGrid indicators (User-Agent, X-SG-* headers)
+
+## Configuration
+
 **File**: `Theatre_Timeline/appsettings.json`
 
 ```json
@@ -60,240 +81,245 @@ Successfully implemented an encrypted email storage system for SendGrid's Inboun
 }
 ```
 
-**Configurable Options**:
-- `EmailStoragePath` - Where to store encrypted emails (default: `./emails`)
-- `EnableEncryption` - Enable/disable encryption (default: `true`)
-
-### 4. Program.cs Updates
-**File**: `Theatre_Timeline/Program.cs`
-
-**Added Services**:
-```csharp
-// Data Protection for encryption
-builder.Services.AddDataProtection()
-    .SetApplicationName("Theatre_TimeLine");
-
-// Email encryption service
-builder.Services.AddSingleton<IEmailEncryptionService, EmailEncryptionService>();
-```
-
-**Added Middleware**:
-- Request diagnostics logging (logs all incoming requests)
-- Controllers mapped with `app.MapControllers()`
-
-**Azure AD Optional**:
-- Made Azure AD authentication optional for testing
-- Falls back to basic auth if Azure AD not configured
-
-## Test Scripts
-
-### PowerShell Tests
-1. **test-sendgrid-https.ps1** - Basic health check endpoint testing
-2. **test-post-email.ps1** - Full email POST test with encryption verification
-
-### Bash Tests
-1. **test-sendgrid.sh** - Basic health check endpoint testing for Linux/Mac
-2. **test-post-email.sh** - Full email POST test for Linux/Mac
-
-## SendGrid Configuration
-
-### Inbound Parse Setup
-1. Go to SendGrid Dashboard ? Settings ? Inbound Parse
-2. Add destination URL: `https://yourdomain.com/api/sendgrid/inbound`
-3. Configure domain/subdomain to forward emails
-4. SendGrid will POST to your endpoint when emails arrive
-
-### Expected SendGrid Fields
-When SendGrid forwards an email, it sends these fields:
-- `from` - Sender email address
-- `to` - Recipient email address(es)
-- `subject` - Email subject
-- `text` - Plain text body
-- `html` - HTML body
-- `headers` - Raw email headers
-- `envelope` - SMTP envelope (JSON)
-- `charsets` - Character encodings (JSON)
-- `SPF` / `dkim` - Email authentication results
-- `attachments` - File attachments (multipart)
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `EmailStoragePath` | `./emails` | Directory for encrypted email storage |
+| `EnableEncryption` | `true` | Enable/disable encryption (always true in current impl) |
 
 ## File Storage
 
-### Storage Location
+### Location
 Default: `{AppDirectory}/emails/`
 
-### File Naming Convention
-`email_{yyyyMMdd_HHmmss}_{sanitized_from}.enc`
+### Naming Convention
+```
+email_{yyyyMMdd_HHmmss}_{sanitized_from}_{guid}.enc
+```
+Example: `email_20240115_103045_john.doe_at_example.com_a1b2c3d4-e5f6-7890-abcd-ef1234567890.enc`
 
-Example: `email_20240115_103045_john.doe_at_example.com.enc`
-
-### File Contents
-Encrypted JSON containing:
+### File Contents (Encrypted JSON)
 ```json
 {
-  "from": "sender@example.com",
+  "email": "...raw MIME content...",
+  "from": "John Doe <john.doe@example.com>",
   "to": "recipient@yourdomain.com",
   "subject": "Email subject",
   "text": "Plain text body",
   "html": "<html>HTML body</html>",
-  "envelope": "{...}",
-  "charsets": "{...}",
+  "dkim": "{@example.com : pass}",
+  "SPF": "pass",
+  "spam_score": "1.2",
+  "envelope": "{\"to\":[\"recipient@yourdomain.com\"],\"from\":\"john.doe@example.com\"}",
   "receivedAt": "2024-01-15T10:30:45.1234567Z",
   "encrypted": true,
-  "attachments": [...]
+  "validatedSource": true,
+  "storedAs": "email_20240115_103045_john.doe_at_example.com_a1b2c3d4.enc",
+  "webhookHeaders": { ... },
+  "attachmentsList": [...]
 }
 ```
 
-### Accessing Stored Emails
-Emails are stored encrypted and are **only accessible server-side** via the `IEmailEncryptionService`:
+## API Reference
 
-```csharp
-// Example: Reading an encrypted email server-side
-var decryptedContent = await _encryptionService.ReadEncryptedFileAsync(filePath);
-var emailData = JsonSerializer.Deserialize<Dictionary<string, object>>(decryptedContent);
-```
+### POST /api/sendgrid/inbound
+Receives email from SendGrid webhook.
 
-**No public API endpoints** are provided for retrieving emails to maintain security.
+**Request**: `multipart/form-data` (sent by SendGrid)
 
-## Security Considerations
-
-### Current Implementation (Proof of Concept)
-? Encryption at rest using Data Protection API  
-? No hardcoded secrets  
-? No public email retrieval endpoints  
-? Anonymous access only for webhook reception  
-? Sanitized file paths in responses  
-
-### Production Recommendations
-?? **Add webhook authentication**:
-   - Validate SendGrid webhook signatures
-   - Use shared secret verification
-   
-?? **Network security**:
-   - Whitelist SendGrid IP addresses
-   - Use HTTPS only (already implemented)
-   
-?? **Key management**:
-   - Store Data Protection keys in Azure Key Vault
-   - Implement key rotation policies
-   
-?? **Data retention**:
-   - Implement automatic cleanup of old emails
-   - Add retention policies
-   
-?? **Processing isolation**:
-   - Move email processing to background service
-   - Implement queue for async processing
-
-## Next Steps
-
-### Immediate (Proof of Concept Complete) ?
-- [x] Receive emails from SendGrid
-- [x] Encrypt emails at rest
-- [x] Store to disk securely
-- [x] Testing scripts created
-- [x] Remove public email retrieval endpoints
-
-### Future Enhancements
-- [ ] Parse email content into notifications
-- [ ] Extract tenant/road information from email
-- [ ] Create Address objects from email data
-- [ ] Save to TenantManagerService/Roads
-- [ ] Implement webhook signature validation
-- [ ] Implement data retention/cleanup
-- [ ] Add email processing queue/background service
-- [ ] Create admin UI for viewing processed notifications
-
-## Testing
-
-### Quick Test
-```powershell
-# Start application
-dotnet run
-
-# Run full test
-.\test-post-email.ps1
-```
-
-### Expected Results
-```
-? Email Posted Successfully!
-? Email encrypted and saved as: email_20240115_103045_john.doe_at_example.com.enc
-
-Response:
+**Response** (200 OK):
+```json
 {
-  "message": "Email received, encrypted, and saved successfully",
-  "file": "email_20240115_103045_john.doe_at_example.com.enc"
+  "message": "Email received, validated, encrypted, and saved successfully",
+  "file": "email_20240115_103045_john.doe_at_example.com_a1b2c3d4.enc",
+  "from": "john.doe@example.com",
+  "subject": "Test email",
+  "spamScore": 1.2,
+  "validated": true
 }
 ```
 
-## Endpoints Summary
-
-### Health Check
-```bash
-GET https://localhost:7070/api/sendgrid/health
+**Response** (500 Error):
+```json
+{
+  "error": "Failed to process email",
+  "errorId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
 ```
-Response:
+
+### GET /api/sendgrid/emails
+Lists all stored emails. **Requires Global Admin**.
+
+**Response** (200 OK):
+```json
+{
+  "count": 5,
+  "emails": [
+    {
+      "filename": "email_20240115_103045_john.doe_at_example.com_a1b2c3d4.enc",
+      "size": 12345,
+      "created": "2024-01-15T10:30:45Z"
+    }
+  ]
+}
+```
+
+### GET /api/sendgrid/email/{filename}
+Retrieves and decrypts a specific email. **Requires Global Admin**.
+
+**Response** (200 OK):
+```json
+{
+  "email": { /* full SendGridInboundEmail object */ },
+  "parsed": {
+    "fromEmail": "john.doe@example.com",
+    "fromName": "John Doe",
+    "toEmail": "recipient@yourdomain.com",
+    "bodyText": "Plain text content...",
+    "bodyContent": "Best available body content...",
+    "isDkimValid": true,
+    "isSpfValid": true,
+    "isSpam": false
+  }
+}
+```
+
+### GET /api/sendgrid/health
+Health check endpoint.
+
+**Response** (200 OK):
 ```json
 {
   "status": "healthy",
   "storagePath": "emails",
   "encryption": "enabled",
-  "timestamp": "2024-01-15T10:30:45.1234567Z"
+  "validation": {
+    "ipRequired": false,
+    "authRequired": false
+  },
+  "timestamp": "2024-01-15T10:30:45Z"
 }
 ```
 
-### Send Email (SendGrid calls this)
+## Security Implementation
+
+### Current Security Measures
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Encryption at rest | ✅ | Data Protection API |
+| Webhook validation | ✅ | SendGrid indicator detection |
+| Development bypass | ✅ | Uses `IHostEnvironment.IsDevelopment()` |
+| PII masking in logs | ✅ | Email addresses masked |
+| Log injection prevention | ✅ | Control characters removed |
+| Path traversal protection | ✅ | Filename validation + path containment check |
+| Error correlation IDs | ✅ | No exception details in responses |
+| Admin-only retrieval | ✅ | Global Admin group membership required |
+| Over-posting prevention | ✅ | `[BindNever]` on metadata fields |
+
+### Production Recommendations
+
+- [ ] **Webhook signature validation** - Validate SendGrid webhook signatures
+- [ ] **IP whitelisting** - Restrict to SendGrid IP ranges
+- [ ] **Key management** - Store Data Protection keys in Azure Key Vault
+- [ ] **Data retention** - Implement automatic cleanup policies
+- [ ] **Rate limiting** - Protect against webhook abuse
+
+## Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| MimeKit | MIME email parsing |
+| Microsoft.AspNetCore.DataProtection | Email encryption |
+
+## Architecture
+
+```
+┌─────────────────┐
+│    SendGrid     │
+│    Webhook      │
+└────────┬────────┘
+         │ POST /api/sendgrid/inbound
+         ▼
+┌─────────────────────────────────────┐
+│  SendGridWebhookValidator           │
+│  - Capture headers                  │
+│  - Validate source (dev bypass)     │
+└────────┬────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  SendGridController                 │
+│  - Model binding via [FromForm]     │
+│  - Set metadata fields              │
+│  - Spam detection                   │
+│  - Serialize to JSON                │
+└────────┬────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  EmailEncryptionService             │
+│  - Encrypt with Data Protection API │
+│  - Write to disk                    │
+└────────┬────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  Encrypted Storage                  │
+│  ./emails/*.enc                     │
+│  (Admin API access only)            │
+└─────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  Global Admin APIs                  │
+│  GET /api/sendgrid/emails           │
+│  GET /api/sendgrid/email/{filename} │
+└─────────────────────────────────────┘
+```
+
+## SendGrid Configuration
+
+### Inbound Parse Setup
+1. Go to SendGrid Dashboard → Settings → Inbound Parse
+2. Add destination URL: `https://yourdomain.com/api/sendgrid/inbound`
+3. Configure domain/subdomain to forward emails
+4. Enable "POST the raw, full MIME message" for full email content
+
+### Expected Form Fields
+| Field | Description |
+|-------|-------------|
+| `from` | Sender with display name |
+| `to` | Recipient(s) |
+| `subject` | Email subject |
+| `text` | Plain text body |
+| `html` | HTML body |
+| `email` | Raw MIME message |
+| `envelope` | SMTP envelope (JSON) |
+| `dkim` | DKIM verification result |
+| `SPF` | SPF verification result |
+| `spam_score` | SpamAssassin score |
+| `attachments` | Attachment count |
+| `attachment-info` | Attachment metadata (JSON) |
+
+## Testing
+
+### Health Check
 ```bash
-POST https://yourdomain.com/api/sendgrid/inbound
-Content-Type: multipart/form-data
-```
-Response:
-```json
-{
-  "message": "Email received, encrypted, and saved successfully",
-  "file": "email_20240115_103045_john.doe_at_example.com.enc"
-}
+curl https://localhost:7070/api/sendgrid/health
 ```
 
-## Email Processing Architecture
-
+### Simulate Email (Development)
+```bash
+curl -X POST https://localhost:7070/api/sendgrid/inbound \
+  -F "from=John Doe <john@example.com>" \
+  -F "to=recipient@yourdomain.com" \
+  -F "subject=Test Email" \
+  -F "text=This is a test email" \
+  -F "SPF=pass" \
+  -F "dkim={@example.com : pass}"
 ```
-???????????????
-?   SendGrid  ?
-?   Webhook   ?
-???????????????
-       ? POST /api/sendgrid/inbound
-       ?
-???????????????????????????????
-?  SendGridController         ?
-?  - Receive email            ?
-?  - Extract form data        ?
-?  - Encrypt with DataProtect ?
-?  - Save to disk (.enc)      ?
-???????????????????????????????
-       ?
-       ?
-???????????????????????????????
-?  Encrypted Storage          ?
-?  ./emails/*.enc             ?
-?  (Server-side access only)  ?
-???????????????????????????????
-       ?
-       ?
-???????????????????????????????
-?  Future: Email Parser       ?
-?  - Read encrypted files     ?
-?  - Parse content            ?
-?  - Create notifications     ?
-?  - Save to Roads            ?
-???????????????????????????????
-```
-
-## Git Branch
-Branch: `dev/willywil548/email_parsing`
-Repository: `https://github.com/willywil548/TheatreRoadTo`
 
 ---
 
-**Status**: ? Proof of Concept Complete - Secure Email Reception  
-**Ready for**: Email parsing and notification creation conversation
+**Status**: ✅ Production-Ready Implementation  
+**Branch**: `dev/willywil548/email_parsing`
