@@ -3,7 +3,8 @@ using Azure.Security.KeyVault.Secrets;
 using Cropper.Blazor.Extensions;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
-using Microsoft.AspNetCore.DataProtection;  
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
 using MudBlazor;
@@ -60,7 +61,7 @@ if (useCert && !string.IsNullOrEmpty(keyVaultUrl))
 
 // Check if Azure AD is configured
 var azureAdSection = builder.Configuration.GetSection("AzureAd");
-bool hasAzureAdConfig = !string.IsNullOrEmpty(azureAdSection["Instance"]) && 
+bool hasAzureAdConfig = !string.IsNullOrEmpty(azureAdSection["Instance"]) &&
                         !string.IsNullOrEmpty(azureAdSection["TenantId"]);
 
 if (hasAzureAdConfig)
@@ -197,6 +198,14 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
+
+var options = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedHost | ForwardedHeaders.XForwardedProto
+};
+options.KnownNetworks.Clear();
+options.KnownProxies.Clear();
+app.UseForwardedHeaders(options);
 
 app.UseAuthentication();
 app.UseAuthorization();
