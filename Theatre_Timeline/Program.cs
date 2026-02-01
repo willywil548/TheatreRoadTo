@@ -184,10 +184,6 @@ builder.Services.AddScoped<IClipboardService, ClipboardService>();
 // Add controllers
 builder.Services.AddControllers();
 
-// Log registered controllers for debugging
-builder.Services.AddSingleton<ILogger>(sp => 
-    sp.GetRequiredService<ILoggerFactory>().CreateLogger("Startup"));
-
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
