@@ -2,7 +2,7 @@
     "associatedApplications":
     [
         {
-            "applicationId":  "AzureAd__ClientId"
+            "applicationId": "AzureAd__ClientId"
         }
     ]
 }
