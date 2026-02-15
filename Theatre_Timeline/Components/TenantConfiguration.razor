@@ -5,12 +5,18 @@
 @inherits LayoutComponentBase
 @inject ISecurityGroupService SecurityGroupService
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
 
 <MudCard Class="card">
     <MudCardHeader Class="card card-header">@this.TenantContainer.TenantName</MudCardHeader>
     <MudCardContent>
         <h6>
             ID: <MudLink Href="@GetTenantRoadLink()" Underline="Underline.Always">@TenantContainer.TenantId</MudLink>
+            <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                           Size="Size.Small"
+                           Title="Copy link to clipboard"
+                           OnClick="CopyTenantLink" />
         </h6>
         Description:
         <p>
@@ -50,6 +56,9 @@
     private Tuple<int, string> buttonText = Tuple.Create(0, tenantActions[0]);
     private string email = string.Empty;
     private List<IRoadToThere> authorizedRoads = new List<IRoadToThere>();
+
+    [Inject]
+    private IJSRuntime JS { get; set; } = default!;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -124,5 +133,12 @@
     private string GetTenantRoadLink()
     {
         return $"/RoadToThere/{TenantContainer.TenantId}";
+    }
+
+    private async Task CopyTenantLink()
+    {
+        var fullUrl = NavigationManager.ToAbsoluteUri(GetTenantRoadLink()).ToString();
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", fullUrl);
+        Snackbar.Add("Link copied to clipboard", Severity.Success);
     }
 }
