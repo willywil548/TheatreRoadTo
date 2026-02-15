@@ -65,34 +65,50 @@ namespace Theatre_TimeLine.Services
         /// <inheritdoc />
         public void CreateTenant(ITenantContainer tenant)
         {
-            FileInfo tenantConfigurationFileInfo = new(
-                Path.Combine(
-                    this.GetTenantRootPath(tenant.TenantId),
-                    tenantConfigurationFile));
-            if (tenantConfigurationFileInfo.Exists)
+            writeManager.Wait();
+            try
             {
-                tenantConfigurationFileInfo.Delete();
+                FileInfo tenantConfigurationFileInfo = new(
+                    Path.Combine(
+                        this.GetTenantRootPath(tenant.TenantId),
+                        tenantConfigurationFile));
+                if (tenantConfigurationFileInfo.Exists)
+                {
+                    tenantConfigurationFileInfo.Delete();
+                }
+
+                tenantConfigurationFileInfo.Directory?.Create();
+                string tenantConfig = JsonSerializer.Serialize(tenant);
+                File.WriteAllText(tenantConfigurationFileInfo.FullName, tenantConfig);
+
+                // Optionally ensure tenant-level groups.
+                if (this._securityGroups != null)
+                {
+                    _ = this._securityGroups.EnsureGroupAsync(SecurityGroupNameBuilder.TenantManager(tenant.TenantId));
+                    _ = this._securityGroups.EnsureGroupAsync(SecurityGroupNameBuilder.TenantUser(tenant.TenantId));
+                }
             }
-
-            tenantConfigurationFileInfo.Directory?.Create();
-            string tenantConfig = JsonSerializer.Serialize(tenant);
-            File.WriteAllText(tenantConfigurationFileInfo.FullName, tenantConfig);
-
-            // Optionally ensure tenant-level groups.
-            if (this._securityGroups != null)
+            finally
             {
-                _ = this._securityGroups.EnsureGroupAsync(SecurityGroupNameBuilder.TenantManager(tenant.TenantId));
-                _ = this._securityGroups.EnsureGroupAsync(SecurityGroupNameBuilder.TenantUser(tenant.TenantId));
+                writeManager.Release();
             }
         }
 
         /// <inheritdoc />
         public void RemoveTenant(Guid guid)
         {
-            DirectoryInfo tenantDirectory = new(this.GetTenantRootPath(guid));
-            if (tenantDirectory.Exists)
+            writeManager.Wait();
+            try
             {
-                tenantDirectory.Delete(recursive: true);
+                DirectoryInfo tenantDirectory = new(this.GetTenantRootPath(guid));
+                if (tenantDirectory.Exists)
+                {
+                    tenantDirectory.Delete(recursive: true);
+                }
+            }
+            finally
+            {
+                writeManager.Release();
             }
         }
 
