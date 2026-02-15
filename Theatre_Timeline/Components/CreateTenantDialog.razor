@@ -1,0 +1,97 @@
+@using Theatre_TimeLine.Contracts
+@namespace Theatre_TimeLine.Components
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Add" Class="mr-3 mb-n1" />
+            Create New Tenant
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudTextField @bind-Value="_tenantName"
+                          Label="Tenant Name"
+                          Required="true"
+                          RequiredError="Tenant name is required"
+                          Validation="@(new Func<string, string?>(ValidateTenantName))"
+                          Immediate="true"
+                          HelperText="Enter a unique name for the tenant" />
+            <MudTextField @bind-Value="_description"
+                          Label="Description"
+                          Lines="3"
+                          HelperText="Optional description for the tenant" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" 
+                   OnClick="Submit" 
+                   Disabled="@(!_isValid || string.IsNullOrWhiteSpace(_tenantName))">
+            Create
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance? MudDialog { get; set; }
+
+    [Parameter]
+    public IEnumerable<string> ExistingTenantNames { get; set; } = [];
+
+    private MudForm? _form;
+    private bool _isValid;
+    private string _tenantName = string.Empty;
+    private string _description = string.Empty;
+
+    private string? ValidateTenantName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "Tenant name cannot be empty";
+        }
+
+        if (name.Length < 2)
+        {
+            return "Tenant name must be at least 2 characters";
+        }
+
+        if (name.Length > 100)
+        {
+            return "Tenant name cannot exceed 100 characters";
+        }
+
+        if (ExistingTenantNames.Any(existing => 
+            string.Equals(existing, name.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            return "A tenant with this name already exists";
+        }
+
+        return null;
+    }
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        if (_isValid && !string.IsNullOrWhiteSpace(_tenantName))
+        {
+            var result = new CreateTenantResult
+            {
+                TenantName = _tenantName.Trim(),
+                Description = _description?.Trim() ?? string.Empty
+            };
+            MudDialog?.Close(DialogResult.Ok(result));
+        }
+    }
+
+    /// <summary>
+    /// Result returned from the dialog when a tenant is created.
+    /// </summary>
+    public sealed class CreateTenantResult
+    {
+        public string TenantName { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+    }
+}

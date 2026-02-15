@@ -8,6 +8,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISecurityGroupService SecurityGroupService
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 @implements IRoadToThereManager
 @attribute [Authorize]
 @page "/TenantManagement/{Tenant?}"
@@ -108,7 +109,7 @@
     /// <returns><see cref="IRoadToThere"/>.</returns>
     public IRoadToThere GetRoad(Guid roadId) => TenantManagerService.GetRoad(roadId);
 
-    private void CreateTenant()
+    private async Task CreateTenant()
     {
         if (!HasRequiredPerms(RequiredSecurityLevel.Global))
         {
@@ -116,13 +117,38 @@
             return;
         }
 
-        TenantManagerService.CreateTenant(new TenantContainer()
+        var existingNames = TenantManagerService.GetTenants().Select(t => t.TenantName);
+        var parameters = new DialogParameters<CreateTenantDialog>
+        {
+            { x => x.ExistingTenantNames, existingNames }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<CreateTenantDialog>("Create New Tenant", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is null || result.Canceled)
+        {
+            return;
+        }
+
+        if (result.Data is CreateTenantDialog.CreateTenantResult tenantResult)
+        {
+            TenantManagerService.CreateTenant(new TenantContainer()
             {
                 TenantId = Guid.NewGuid(),
-                Description = "Test description",
-                TenantName = "Test Name"
+                Description = tenantResult.Description,
+                TenantName = tenantResult.TenantName
             });
-        this.StateHasChanged();
+            Snackbar.Add($"Tenant '{tenantResult.TenantName}' created successfully.", Severity.Success);
+            this.StateHasChanged();
+        }
     }
 
     private void RemoveTenant(ITenantContainer tenantContainer)

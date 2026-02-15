@@ -5,12 +5,19 @@
 @inherits LayoutComponentBase
 @inject ISecurityGroupService SecurityGroupService
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject IClipboardService ClipboardService
 
 <MudCard Class="card">
     <MudCardHeader Class="card card-header">@this.TenantContainer.TenantName</MudCardHeader>
     <MudCardContent>
         <h6>
             ID: <MudLink Href="@GetTenantRoadLink()" Underline="Underline.Always">@TenantContainer.TenantId</MudLink>
+            <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                           Size="Size.Small"
+                           Title="Copy link to clipboard"
+                           OnClick="CopyTenantLink" />
         </h6>
         Description:
         <p>
@@ -124,5 +131,12 @@
     private string GetTenantRoadLink()
     {
         return $"/RoadToThere/{TenantContainer.TenantId}";
+    }
+
+    private async Task CopyTenantLink()
+    {
+        var fullUrl = NavigationManager.ToAbsoluteUri(GetTenantRoadLink()).ToString();
+        await ClipboardService.CopyToClipboard(fullUrl);
+        Snackbar.Add("Link copied to clipboard", Severity.Success);
     }
 }
