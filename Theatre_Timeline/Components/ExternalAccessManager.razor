@@ -114,74 +114,114 @@
                 }
                 else
                 {
-                    <MudTable Items="@_tokens" Hover="true" Dense="true" Striped="true">
-                        <HeaderContent>
-                            <MudTh>Name</MudTh>
-                            <MudTh>Email</MudTh>
-                            <MudTh>Roads</MudTh>
-                            <MudTh>Created</MudTh>
-                            <MudTh>Last Access</MudTh>
-                            <MudTh>Status</MudTh>
-                            <MudTh>Actions</MudTh>
-                        </HeaderContent>
-                        <RowTemplate>
-                            <MudTd DataLabel="Name">@context.StudentName</MudTd>
-                            <MudTd DataLabel="Email">@context.Email</MudTd>
-                            <MudTd DataLabel="Roads">
-                                <MudChipSet T="string">
-                                    @foreach (var roadId in context.AuthorizedRoadIds.Take(3))
+                    <MudList T="AccessToken" Dense="true" DisableGutters="true">
+                        @foreach (var token in _tokens)
+                        {
+                            <MudListItem DisableRipple="true" Style="cursor: default;">
+                                <div style="width: 100%;">
+                                    <!-- Main row -->
+                                    <div class="d-flex flex-wrap align-center justify-space-between gap-2">
+                                        <!-- Left side: Name and email -->
+                                        <div class="d-flex align-center gap-2" style="min-width: 180px;">
+                                            <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Color="@(token.IsActive ? Color.Default : Color.Error)" />
+                                            <div>
+                                                <MudText Typo="Typo.body2"><strong>@token.StudentName</strong></MudText>
+                                                <MudText Typo="Typo.caption" Color="Color.Secondary">@token.Email</MudText>
+                                            </div>
+                                            @if (!token.IsActive)
+                                            {
+                                                <MudChip T="string" Size="Size.Small" Color="Color.Error">Revoked</MudChip>
+                                            }
+                                        </div>
+
+                                        <!-- Middle: Roads -->
+                                        <div class="d-flex flex-wrap gap-1" style="flex: 1; min-width: 120px;">
+                                            @foreach (var roadId in token.AuthorizedRoadIds)
+                                            {
+                                                var road = TenantContainer.Roads.FirstOrDefault(r => r.RoadId == roadId);
+                                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                                                    @(road?.Title ?? roadId.ToString()[..8])
+                                                </MudChip>
+                                            }
+                                        </div>
+
+                                        <!-- Right side: Last access and actions -->
+                                        <div class="d-flex align-center gap-1">
+                                            @if (token.LastAccessedUtc.HasValue)
+                                            {
+                                                <MudTooltip Text="@($"Last accessed: {token.LastAccessedUtc.Value.ToLocalTime():MMM dd, yyyy HH:mm} ({token.AccessCount} total visits)")">
+                                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default">
+                                                        <MudIcon Icon="@Icons.Material.Filled.AccessTime" Size="Size.Small" Class="mr-1" />
+                                                        @token.AccessCount visits
+                                                    </MudChip>
+                                                </MudTooltip>
+                                            }
+
+                                            @if (token.IsActive)
+                                            {
+                                                <MudTooltip Text="Edit Roads">
+                                                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                                                   Size="Size.Small"
+                                                                   OnClick="@(() => ToggleEditToken(token))" />
+                                                </MudTooltip>
+                                                <MudTooltip Text="Regenerate Link">
+                                                    <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                                                   Size="Size.Small"
+                                                                   Color="Color.Primary"
+                                                                   OnClick="@(() => RegenerateToken(token))" />
+                                                </MudTooltip>
+                                                <MudTooltip Text="Revoke Access">
+                                                    <MudIconButton Icon="@Icons.Material.Filled.Block"
+                                                                   Size="Size.Small"
+                                                                   Color="Color.Error"
+                                                                   OnClick="@(() => RevokeToken(token))" />
+                                                </MudTooltip>
+                                            }
+                                        </div>
+                                    </div>
+
+                                    <!-- Inline edit panel (shown below this student when editing) -->
+                                    @if (_editingToken?.TokenId == token.TokenId)
                                     {
-                                        var road = TenantContainer.Roads.FirstOrDefault(r => r.RoadId == roadId);
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Info">
-                                            @(road?.Title ?? roadId.ToString()[..8])
-                                        </MudChip>
+                                        <MudPaper Class="pa-3 mt-2" Elevation="1" Style="background-color: var(--mud-palette-background-gray);">
+                                            <MudText Typo="Typo.body2" Class="mb-2">
+                                                <strong>Edit roads for @token.StudentName:</strong>
+                                            </MudText>
+                                            <MudSelect T="Guid"
+                                                       Label="Assigned Roads"
+                                                       MultiSelection="true"
+                                                       @bind-SelectedValues="_editSelectedRoadIds"
+                                                       ToStringFunc="@(id => TenantContainer.Roads.FirstOrDefault(r => r.RoadId == id)?.Title ?? id.ToString())"
+                                                       Variant="Variant.Outlined"
+                                                       Dense="true"
+                                                       Class="mb-2">
+                                                @foreach (var road in TenantContainer.Roads)
+                                                {
+                                                    <MudSelectItem T="Guid" Value="@road.RoadId">@road.Title</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                            <div class="d-flex gap-2">
+                                                <MudButton Variant="Variant.Filled"
+                                                           Color="Color.Primary"
+                                                           Size="Size.Small"
+                                                           OnClick="SaveRoadAssignments"
+                                                           Disabled="@(!_editSelectedRoadIds.Any())">
+                                                    Save
+                                                </MudButton>
+                                                <MudButton Variant="Variant.Outlined"
+                                                           Color="Color.Default"
+                                                           Size="Size.Small"
+                                                           OnClick="CancelEdit">
+                                                    Cancel
+                                                </MudButton>
+                                            </div>
+                                        </MudPaper>
                                     }
-                                    @if (context.AuthorizedRoadIds.Count > 3)
-                                    {
-                                        <MudChip T="string" Size="Size.Small">+@(context.AuthorizedRoadIds.Count - 3) more</MudChip>
-                                    }
-                                </MudChipSet>
-                            </MudTd>
-                            <MudTd DataLabel="Created">@context.CreatedUtc.ToLocalTime().ToString("MMM dd, yyyy")</MudTd>
-                            <MudTd DataLabel="Last Access">
-                                @if (context.LastAccessedUtc.HasValue)
-                                {
-                                    <span>@context.LastAccessedUtc.Value.ToLocalTime().ToString("MMM dd, HH:mm") (@context.AccessCount uses)</span>
-                                }
-                                else
-                                {
-                                    <MudText Color="Color.Secondary">Never</MudText>
-                                }
-                            </MudTd>
-                            <MudTd DataLabel="Status">
-                                @if (context.IsActive)
-                                {
-                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip>
-                                }
-                                else
-                                {
-                                    <MudChip T="string" Size="Size.Small" Color="Color.Error">Revoked</MudChip>
-                                }
-                            </MudTd>
-                            <MudTd DataLabel="Actions">
-                                @if (context.IsActive)
-                                {
-                                    <MudTooltip Text="Regenerate Link">
-                                        <MudIconButton Icon="@Icons.Material.Filled.Refresh"
-                                                       Color="Color.Primary"
-                                                       Size="Size.Small"
-                                                       OnClick="@(() => RegenerateToken(context))" />
-                                    </MudTooltip>
-                                    <MudTooltip Text="Revoke Access">
-                                        <MudIconButton Icon="@Icons.Material.Filled.Block"
-                                                       Color="Color.Error"
-                                                       Size="Size.Small"
-                                                       OnClick="@(() => RevokeToken(context))" />
-                                    </MudTooltip>
-                                }
-                            </MudTd>
-                        </RowTemplate>
-                    </MudTable>
+                                </div>
+                            </MudListItem>
+                            <MudDivider />
+                        }
+                    </MudList>
                 }
             </MudExpansionPanel>
         </MudExpansionPanels>
@@ -207,11 +247,15 @@
     private MudExpansionPanel? _createPanel;
     private MudExpansionPanel? _resultPanel;
 
-    // Form fields
+    // Form fields for creating new token
     private string _newStudentName = string.Empty;
     private string _newEmail = string.Empty;
     private IEnumerable<Guid> _selectedRoadIds = Enumerable.Empty<Guid>();
     private string? _newNotes;
+
+    // Edit mode fields
+    private AccessToken? _editingToken;
+    private IEnumerable<Guid> _editSelectedRoadIds = Enumerable.Empty<Guid>();
 
     // Created result
     private AccessTokenCreationResult? _lastCreatedResult;
@@ -262,6 +306,7 @@
 
         // Clear any previous result before starting
         _lastCreatedResult = null;
+        _editingToken = null;
 
         try
         {
@@ -335,6 +380,62 @@
         _lastCreatedResult = null;
     }
 
+    private void ToggleEditToken(AccessToken token)
+    {
+        if (_editingToken?.TokenId == token.TokenId)
+        {
+            // Already editing this one - close it
+            CancelEdit();
+        }
+        else
+        {
+            // Start editing this token
+            _editingToken = token;
+            _editSelectedRoadIds = token.AuthorizedRoadIds.ToList();
+            _lastCreatedResult = null; // Clear any link result
+        }
+        StateHasChanged();
+    }
+
+    private void CancelEdit()
+    {
+        _editingToken = null;
+        _editSelectedRoadIds = Enumerable.Empty<Guid>();
+    }
+
+    private async Task SaveRoadAssignments()
+    {
+        if (_editingToken == null || !_editSelectedRoadIds.Any())
+        {
+            Snackbar.Add("Please select at least one road.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            var success = await AccessTokenService.UpdateRoadAssignmentsAsync(
+                _editingToken.TokenId,
+                _editSelectedRoadIds,
+                _managerEmail);
+
+            if (success)
+            {
+                Snackbar.Add($"Roads updated for {_editingToken.StudentName}!", Severity.Success);
+                _editingToken = null;
+                _editSelectedRoadIds = Enumerable.Empty<Guid>();
+                await LoadTokensAsync();
+            }
+            else
+            {
+                Snackbar.Add("Failed to update roads. The token may have been revoked.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error updating roads: {ex.Message}", Severity.Error);
+        }
+    }
+
     private async Task RevokeToken(AccessToken token)
     {
         try
@@ -360,6 +461,7 @@
     {
         // Clear any previous result before starting
         _lastCreatedResult = null;
+        _editingToken = null;
 
         try
         {

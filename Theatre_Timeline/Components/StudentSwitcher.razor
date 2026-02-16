@@ -7,7 +7,8 @@
 @* 
     StudentSwitcher Component
     Shows a dropdown for parents/guardians who have multiple students.
-    Allows switching between individual students or viewing "All Students" roads.
+    Allows switching between individual students.
+    Only shows students from the same tenant as the current token.
 *@
 
 @if (_isTokenUser && _studentTokens.Count > 0)
@@ -27,7 +28,7 @@
         }
         else
         {
-            @* Multiple students - show dropdown *@
+            @* Multiple students - show dropdown to switch between them *@
             <MudMenu Icon="@Icons.Material.Filled.People" 
                      Color="Color.Primary"
                      Variant="Variant.Outlined"
@@ -42,30 +43,19 @@
                              Color="Color.Primary" 
                              Variant="Variant.Outlined"
                              Class="student-chip clickable">
-                        <MudIcon Icon="@Icons.Material.Filled.People" Size="Size.Small" Class="mr-1" />
+                        <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Class="mr-1" />
                         @_currentStudentName
                         <MudIcon Icon="@Icons.Material.Filled.ArrowDropDown" Size="Size.Small" />
                     </MudChip>
                 </ActivatorContent>
                 <ChildContent>
-                    <MudMenuItem OnClick="@(() => SwitchToAllStudents())">
-                        <div class="d-flex align-center">
-                            <MudIcon Icon="@Icons.Material.Filled.Groups" Size="Size.Small" Class="mr-2" />
-                            <span>All Students (@_studentTokens.Count)</span>
-                            @if (_viewMode == ViewMode.AllStudents)
-                            {
-                                <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Class="ml-2" Color="Color.Success" />
-                            }
-                        </div>
-                    </MudMenuItem>
-                    <MudDivider />
                     @foreach (var token in _studentTokens)
                     {
                         <MudMenuItem OnClick="@(() => SwitchToStudent(token))">
                             <div class="d-flex align-center">
                                 <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Class="mr-2" />
                                 <span>@token.StudentName</span>
-                                @if (_viewMode == ViewMode.SingleStudent && _currentTokenId == token.TokenId)
+                                @if (_currentTokenId == token.TokenId)
                                 {
                                     <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Class="ml-2" Color="Color.Success" />
                                 }
@@ -98,24 +88,11 @@
 </style>
 
 @code {
-    /// <summary>
-    /// Event callback when the student selection changes.
-    /// Provides the selected token(s) and view mode.
-    /// </summary>
-    [Parameter]
-    public EventCallback<StudentSelectionChangedEventArgs> OnSelectionChanged { get; set; }
-
-    private enum ViewMode
-    {
-        SingleStudent,
-        AllStudents
-    }
-
     private bool _isTokenUser;
     private List<AccessToken> _studentTokens = new();
     private Guid? _currentTokenId;
+    private Guid? _currentTenantId;
     private string _currentStudentName = string.Empty;
-    private ViewMode _viewMode = ViewMode.SingleStudent;
 
     protected override async Task OnInitializedAsync()
     {
@@ -128,11 +105,15 @@
         {
             var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
             _currentTokenId = user.GetTokenId();
+            _currentTenantId = user.GetTokenTenantId();
 
-            if (!string.IsNullOrEmpty(email))
+            if (!string.IsNullOrEmpty(email) && _currentTenantId.HasValue)
             {
-                // Load all tokens for this email (parent may have multiple students)
-                _studentTokens = (await AccessTokenService.GetTokensByEmailAsync(email)).ToList();
+                // Load all tokens for this email, filtered to the current tenant only
+                var allTokens = await AccessTokenService.GetTokensByEmailAsync(email);
+                _studentTokens = allTokens
+                    .Where(t => t.TenantId == _currentTenantId.Value)
+                    .ToList();
             }
 
             // Set current student name
@@ -143,12 +124,11 @@
 
     private void SwitchToStudent(AccessToken token)
     {
-        if (token.TokenId == _currentTokenId && _viewMode == ViewMode.SingleStudent)
+        if (token.TokenId == _currentTokenId)
         {
             return; // Already selected
         }
 
-        _viewMode = ViewMode.SingleStudent;
         _currentTokenId = token.TokenId;
         _currentStudentName = token.StudentName;
 
@@ -156,50 +136,8 @@
         NavigationManager.NavigateTo($"/api/auth/token/{token.TokenId}", forceLoad: true);
     }
 
-    private async Task SwitchToAllStudents()
-    {
-        if (_viewMode == ViewMode.AllStudents)
-        {
-            return; // Already in all students mode
-        }
-
-        _viewMode = ViewMode.AllStudents;
-        _currentStudentName = $"All Students ({_studentTokens.Count})";
-
-        // Notify parent component about the view change
-        if (OnSelectionChanged.HasDelegate)
-        {
-            await OnSelectionChanged.InvokeAsync(new StudentSelectionChangedEventArgs
-            {
-                ViewMode = StudentViewMode.AllStudents,
-                Tokens = _studentTokens,
-                AllAuthorizedRoadIds = _studentTokens
-                    .SelectMany(t => t.AuthorizedRoadIds)
-                    .Distinct()
-                    .ToList()
-            });
-        }
-
-        StateHasChanged();
-    }
-
     /// <summary>
-    /// Gets the current view mode.
-    /// </summary>
-    public StudentViewMode GetCurrentViewMode() => _viewMode == ViewMode.AllStudents
-        ? StudentViewMode.AllStudents
-        : StudentViewMode.SingleStudent;
-
-    /// <summary>
-    /// Gets all road IDs the user has access to across all students.
-    /// </summary>
-    public IReadOnlyList<Guid> GetAllAuthorizedRoadIds() => _studentTokens
-        .SelectMany(t => t.AuthorizedRoadIds)
-        .Distinct()
-        .ToList();
-
-    /// <summary>
-    /// Gets all student tokens for this user.
+    /// Gets all student tokens for this user in the current tenant.
     /// </summary>
     public IReadOnlyList<AccessToken> GetAllStudentTokens() => _studentTokens;
 }
