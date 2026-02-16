@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
 using Cropper.Blazor.Extensions;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
@@ -66,10 +67,39 @@ bool hasAzureAdConfig = !string.IsNullOrEmpty(azureAdSection["Instance"]) &&
 
 if (hasAzureAdConfig)
 {
-    // Add services to the container with Azure AD authentication.
-    builder.Services.AddHttpContextAccessor()
-        .AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
-        .AddMicrosoftIdentityWebApp(azureAdSection);
+    // Add services to the container with Azure AD + Token authentication.
+    builder.Services.AddHttpContextAccessor();
+
+    // Configure authentication with multi-scheme support
+    var authBuilder = builder.Services.AddAuthentication(options =>
+    {
+        // Use a policy scheme to dynamically select the authentication scheme
+        options.DefaultScheme = "MultiAuth";
+        options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+    });
+
+    // Add Azure AD authentication
+    authBuilder.AddMicrosoftIdentityWebApp(azureAdSection);
+
+    // Add token-based auth for external users
+    authBuilder.AddTokenAuthentication();
+
+    // Add policy scheme to dynamically select between AAD and Token auth
+    authBuilder.AddPolicyScheme("MultiAuth", "Azure AD or Token", options =>
+    {
+        // Dynamically select auth scheme based on request
+        options.ForwardDefaultSelector = context =>
+        {
+            // If token cookie exists, use token authentication
+            if (context.Request.Cookies.ContainsKey(TokenAuthenticationDefaults.CookieName))
+            {
+                return TokenAuthenticationDefaults.AuthenticationScheme;
+            }
+
+            // Otherwise use OpenID Connect (Azure AD)
+            return OpenIdConnectDefaults.AuthenticationScheme;
+        };
+    });
 
     builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme, options =>
     {
@@ -104,8 +134,9 @@ if (hasAzureAdConfig)
 
     builder.Services.AddAuthorization(options =>
     {
-        // Require auth by default. Mark public pages/components with [AllowAnonymous].
-        options.FallbackPolicy = options.DefaultPolicy;
+        // Don't use FallbackPolicy - it prevents anonymous access to pages that need it (like demo).
+        // Instead, use [Authorize] attribute on pages that require authentication.
+        // This allows the Blazor AuthorizeRouteView to handle authorization at the component level.
 
         // Example policy based on app role
         options.AddPolicy("TenantAdminsOnly", policy =>
@@ -117,10 +148,11 @@ if (hasAzureAdConfig)
 }
 else
 {
-    // No Azure AD configured - use basic authentication setup
-    Trace.WriteLine("WARNING: Azure AD not configured. Running without authentication for testing purposes.");
+    // No Azure AD configured - use token authentication only
+    Trace.WriteLine("WARNING: Azure AD not configured. Running with token authentication only.");
     builder.Services.AddHttpContextAccessor();
-    builder.Services.AddAuthentication();
+    builder.Services.AddAuthentication(TokenAuthenticationDefaults.AuthenticationScheme)
+        .AddTokenAuthentication();
     builder.Services.AddAuthorization();
     builder.Services.AddRazorPages();
 }
@@ -155,6 +187,9 @@ builder.Services.AddMudServices(config =>
 // Add Data Protection for encryption
 builder.Services.AddDataProtection()
     .SetApplicationName("Theatre_TimeLine");
+
+// Add access token service for external user authentication
+builder.Services.AddSingleton<IAccessTokenService, AccessTokenService>();
 
 // Add email encryption service
 builder.Services.AddSingleton<IEmailEncryptionService, EmailEncryptionService>();
@@ -243,21 +278,18 @@ app.Use(async (ctx, next) =>
 
 app.MapControllers();
 
+// Map token authentication endpoints (set/clear cookie, and /access/{token} handler)
+// IMPORTANT: This must come BEFORE MapFallbackToPage so /access/{token} is handled by the API
+app.MapTokenAuthEndpoints();
+
 // Redirect "/" to "/home" (302). Use permanent: true for 308.
 app.MapGet("/", () => Results.Redirect("/home", permanent: false)).AllowAnonymous();
 
-// Require auth for the Blazor Hub (only if Azure AD is configured)
-if (hasAzureAdConfig)
-{
-    app.MapBlazorHub().RequireAuthorization();
-}
-else
-{
-    app.MapBlazorHub();
-}
+// Map Blazor Hub - allow anonymous connection, authorization is handled at page/component level
+app.MapBlazorHub();
 
 // Allow anonymous for the initial page request
-// IMPORTANT: MapFallbackToPage must come AFTER MapControllers
+// IMPORTANT: MapFallbackToPage must come AFTER MapControllers and MapTokenAuthEndpoints
 // to ensure API routes are not captured by the Blazor fallback
 app.MapFallbackToPage("/_Host").AllowAnonymous();
 

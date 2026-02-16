@@ -1,6 +1,8 @@
 ﻿@namespace Theatre_TimeLine.Shared
 
 @inherits LayoutComponentBase
+@using Theatre_TimeLine.Components
+@using Theatre_TimeLine.Services
 
 <PageTitle>Theatre_TimeLine</PageTitle>
 
@@ -9,6 +11,24 @@
 <MudDialogProvider/>
 <MudSnackbarProvider/>
 
+<!-- Floating user controls in top right -->
+<AuthorizeView>
+    <Authorized>
+        <div style="position: fixed; top: 12px; right: 16px; z-index: 9999; display: flex; align-items: center; gap: 8px;">
+            @* Student Switcher - only shows for token-authenticated users with multiple students *@
+            <StudentSwitcher />
+            
+            @* Logout button *@
+            <MudTooltip Text="@GetLogoutTooltip(context.User)">
+                <MudIconButton Icon="@Icons.Material.Filled.Logout"
+                               Color="Color.Default"
+                               Size="Size.Medium"
+                               OnClick="@(() => Logout(context.User))"
+                               Style="background: rgba(255,255,255,0.9); border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);" />
+            </MudTooltip>
+        </div>
+    </Authorized>
+</AuthorizeView>
 
 <div class="page">
     @if (showNavMenu)
@@ -31,6 +51,9 @@
     [Inject]
     private IJSRuntime JS { get; set; } = default!;
 
+    [Inject]
+    private NavigationManager NavigationManager { get; set; } = default!;
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
@@ -45,5 +68,27 @@
     {
         showNavMenu = !showNavMenu;
         StateHasChanged();
+    }
+
+    private string GetLogoutTooltip(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var name = user.Identity?.Name ?? "User";
+        var authType = user.Identity?.AuthenticationType == TokenAuthenticationDefaults.AuthenticationScheme
+            ? "Token Access"
+            : "Azure AD";
+        return $"Logout ({name} - {authType})";
+    }
+
+    private void Logout(System.Security.Claims.ClaimsPrincipal user)
+    {
+        // Route to appropriate logout endpoint based on authentication type
+        if (user.Identity?.AuthenticationType == TokenAuthenticationDefaults.AuthenticationScheme)
+        {
+            NavigationManager.NavigateTo("/api/auth/token/logout", forceLoad: true);
+        }
+        else
+        {
+            NavigationManager.NavigateTo("MicrosoftIdentity/Account/SignOut", forceLoad: true);
+        }
     }
 }

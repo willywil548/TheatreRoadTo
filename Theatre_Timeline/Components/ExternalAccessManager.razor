@@ -1,0 +1,397 @@
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Services
+@inject IAccessTokenService AccessTokenService
+@inject ISnackbar Snackbar
+@inject IClipboardService ClipboardService
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider Auth
+
+<MudPaper Class="pa-4 mt-4">
+    <MudText Typo="Typo.h6" Class="mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.Link" Class="mr-2" />
+        External User Access Links
+    </MudText>
+
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+        Create access links for users who don't need Azure AD accounts.
+        They can access their assigned roads using a secure link.
+    </MudText>
+
+    @if (_canManage)
+    {
+        <MudExpansionPanels @ref="_expansionPanels" MultiExpansion="true">
+            <!-- Create New Access Link -->
+            <MudExpansionPanel @ref="_createPanel" Text="Create New Access Link" IsInitiallyExpanded="false">
+                <MudGrid Spacing="3">
+                    <MudItem xs="12" sm="6">
+                        <MudTextField @bind-Value="_newStudentName"
+                                      Label="Student/User Name"
+                                      Required="true"
+                                      Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudTextField @bind-Value="_newEmail"
+                                      Label="Email Address"
+                                      Required="true"
+                                      InputType="InputType.Email"
+                                      Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudSelect T="Guid"
+                                   Label="Assign Roads"
+                                   MultiSelection="true"
+                                   @bind-SelectedValues="_selectedRoadIds"
+                                   ToStringFunc="@(id => TenantContainer.Roads.FirstOrDefault(r => r.RoadId == id)?.Title ?? id.ToString())"
+                                   Variant="Variant.Outlined">
+                            @foreach (var road in TenantContainer.Roads)
+                            {
+                                <MudSelectItem T="Guid" Value="@road.RoadId">@road.Title</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="_newNotes"
+                                      Label="Notes (optional)"
+                                      Lines="2"
+                                      Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   OnClick="CreateAccessLink"
+                                   Disabled="@(!CanCreate)">
+                            <MudIcon Icon="@Icons.Material.Filled.Add" Class="mr-1" />
+                            Create Access Link
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudExpansionPanel>
+
+            <!-- Show Created Link (only after creation or regeneration) -->
+            @if (_lastCreatedResult != null && _lastCreatedResult.Success)
+            {
+                <MudExpansionPanel @ref="_resultPanel" Text="@($"Access Link Ready - {_lastCreatedResult.Token?.StudentName}")" IsInitiallyExpanded="true">
+                    <MudAlert Severity="Severity.Success" Class="mb-3">
+                        <strong>Copy the link below and send it to the user.</strong>
+                        This is the only time it will be shown.
+                    </MudAlert>
+
+                    <MudPaper Elevation="0" Class="pa-3 mud-background-gray rounded" Style="word-break: break-all;">
+                        <MudText Typo="Typo.body2" Style="font-family: monospace;">
+                            @_lastCreatedResult.AccessUrl
+                        </MudText>
+                    </MudPaper>
+
+                    <MudButtonGroup Class="mt-3">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Size="Size.Large"
+                                   OnClick="CopyLinkToClipboard">
+                            <MudIcon Icon="@Icons.Material.Filled.ContentCopy" Class="mr-1" />
+                            Copy Link to Clipboard
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Default"
+                                   OnClick="ClearCreatedLink">
+                            Done
+                        </MudButton>
+                    </MudButtonGroup>
+                </MudExpansionPanel>
+            }
+
+            <!-- Existing Access Tokens -->
+            <MudExpansionPanel Text="@($"Manage Access Links ({_tokens.Count})")" IsInitiallyExpanded="@(_lastCreatedResult == null)">
+                @if (_isLoading)
+                {
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+                }
+                else if (_tokens.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                        No access links created yet. Use the form above to create one.
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudTable Items="@_tokens" Hover="true" Dense="true" Striped="true">
+                        <HeaderContent>
+                            <MudTh>Name</MudTh>
+                            <MudTh>Email</MudTh>
+                            <MudTh>Roads</MudTh>
+                            <MudTh>Created</MudTh>
+                            <MudTh>Last Access</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Actions</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Name">@context.StudentName</MudTd>
+                            <MudTd DataLabel="Email">@context.Email</MudTd>
+                            <MudTd DataLabel="Roads">
+                                <MudChipSet T="string">
+                                    @foreach (var roadId in context.AuthorizedRoadIds.Take(3))
+                                    {
+                                        var road = TenantContainer.Roads.FirstOrDefault(r => r.RoadId == roadId);
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Info">
+                                            @(road?.Title ?? roadId.ToString()[..8])
+                                        </MudChip>
+                                    }
+                                    @if (context.AuthorizedRoadIds.Count > 3)
+                                    {
+                                        <MudChip T="string" Size="Size.Small">+@(context.AuthorizedRoadIds.Count - 3) more</MudChip>
+                                    }
+                                </MudChipSet>
+                            </MudTd>
+                            <MudTd DataLabel="Created">@context.CreatedUtc.ToLocalTime().ToString("MMM dd, yyyy")</MudTd>
+                            <MudTd DataLabel="Last Access">
+                                @if (context.LastAccessedUtc.HasValue)
+                                {
+                                    <span>@context.LastAccessedUtc.Value.ToLocalTime().ToString("MMM dd, HH:mm") (@context.AccessCount uses)</span>
+                                }
+                                else
+                                {
+                                    <MudText Color="Color.Secondary">Never</MudText>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Status">
+                                @if (context.IsActive)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error">Revoked</MudChip>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Actions">
+                                @if (context.IsActive)
+                                {
+                                    <MudTooltip Text="Regenerate Link">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                                       Color="Color.Primary"
+                                                       Size="Size.Small"
+                                                       OnClick="@(() => RegenerateToken(context))" />
+                                    </MudTooltip>
+                                    <MudTooltip Text="Revoke Access">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Block"
+                                                       Color="Color.Error"
+                                                       Size="Size.Small"
+                                                       OnClick="@(() => RevokeToken(context))" />
+                                    </MudTooltip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            You do not have permission to manage external access links for this tenant.
+        </MudAlert>
+    }
+</MudPaper>
+
+@code {
+    [Parameter]
+    public required ITenantContainer TenantContainer { get; set; }
+
+    private bool _canManage;
+    private bool _isLoading = true;
+    private string _managerEmail = string.Empty;
+
+    // Panel references for programmatic control
+    private MudExpansionPanels? _expansionPanels;
+    private MudExpansionPanel? _createPanel;
+    private MudExpansionPanel? _resultPanel;
+
+    // Form fields
+    private string _newStudentName = string.Empty;
+    private string _newEmail = string.Empty;
+    private IEnumerable<Guid> _selectedRoadIds = Enumerable.Empty<Guid>();
+    private string? _newNotes;
+
+    // Created result
+    private AccessTokenCreationResult? _lastCreatedResult;
+
+    // Existing tokens
+    private List<AccessToken> _tokens = new();
+
+    private bool CanCreate =>
+        !string.IsNullOrWhiteSpace(_newStudentName) &&
+        !string.IsNullOrWhiteSpace(_newEmail) &&
+        _selectedRoadIds.Any();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        _managerEmail = authState.User.FindFirst("preferred_username")?.Value
+                        ?? authState.User.Identity?.Name
+                        ?? string.Empty;
+
+        // For now, allow management if user is authenticated via AAD (not token)
+        // Token-authenticated users shouldn't be managing other tokens
+        _canManage = authState.User.Identity?.IsAuthenticated == true &&
+                     authState.User.Identity?.AuthenticationType != TokenAuthenticationDefaults.AuthenticationScheme;
+
+        if (_canManage)
+        {
+            await LoadTokensAsync();
+        }
+
+        _isLoading = false;
+    }
+
+    private async Task LoadTokensAsync()
+    {
+        try
+        {
+            _tokens = (await AccessTokenService.GetTokensForTenantAsync(TenantContainer.TenantId)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load access tokens: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task CreateAccessLink()
+    {
+        if (!CanCreate) return;
+
+        // Clear any previous result before starting
+        _lastCreatedResult = null;
+
+        try
+        {
+            _lastCreatedResult = await AccessTokenService.CreateTokenAsync(
+                _newStudentName.Trim(),
+                _newEmail.Trim(),
+                TenantContainer.TenantId,
+                _selectedRoadIds,
+                _managerEmail,
+                _newNotes);
+
+            if (_lastCreatedResult.Success)
+            {
+                // Build the access URL using NavigationManager (knows the actual app URL)
+                _lastCreatedResult.AccessUrl = $"{NavigationManager.BaseUri.TrimEnd('/')}/access/{_lastCreatedResult.PlaintextToken}";
+
+                Snackbar.Add($"Access link created! Copy it now.", Severity.Success);
+
+                // Clear form
+                _newStudentName = string.Empty;
+                _newEmail = string.Empty;
+                _selectedRoadIds = Enumerable.Empty<Guid>();
+                _newNotes = null;
+
+                // Collapse the create panel
+                if (_createPanel != null)
+                {
+                    await _createPanel.CollapseAsync();
+                }
+
+                // Reload tokens
+                await LoadTokensAsync();
+
+                // Force re-render to show the result panel, then expand it
+                StateHasChanged();
+                await Task.Delay(50); // Small delay to allow panel to render
+
+                if (_resultPanel != null)
+                {
+                    await _resultPanel.ExpandAsync();
+                }
+            }
+            else
+            {
+                Snackbar.Add(_lastCreatedResult.ErrorMessage ?? "Failed to create access link", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error creating access link: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task CopyLinkToClipboard()
+    {
+        if (_lastCreatedResult?.AccessUrl == null) return;
+
+        try
+        {
+            await ClipboardService.CopyToClipboard(_lastCreatedResult.AccessUrl);
+            Snackbar.Add("Link copied to clipboard!", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to copy to clipboard. Please copy manually.", Severity.Warning);
+        }
+    }
+
+    private void ClearCreatedLink()
+    {
+        _lastCreatedResult = null;
+    }
+
+    private async Task RevokeToken(AccessToken token)
+    {
+        try
+        {
+            var success = await AccessTokenService.RevokeTokenAsync(token.TokenId, _managerEmail);
+            if (success)
+            {
+                Snackbar.Add($"Access revoked for {token.StudentName}", Severity.Info);
+                await LoadTokensAsync();
+            }
+            else
+            {
+                Snackbar.Add("Failed to revoke access", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error revoking access: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task RegenerateToken(AccessToken token)
+    {
+        // Clear any previous result before starting
+        _lastCreatedResult = null;
+
+        try
+        {
+            _lastCreatedResult = await AccessTokenService.RegenerateTokenAsync(token.TokenId, _managerEmail);
+
+            if (_lastCreatedResult.Success)
+            {
+                // Build the access URL using NavigationManager
+                _lastCreatedResult.AccessUrl = $"{NavigationManager.BaseUri.TrimEnd('/')}/access/{_lastCreatedResult.PlaintextToken}";
+
+                Snackbar.Add($"New link generated for {token.StudentName}. Copy it now!", Severity.Success);
+
+                // Reload tokens to refresh the list
+                await LoadTokensAsync();
+
+                // Force re-render to show the result panel, then expand it
+                StateHasChanged();
+                await Task.Delay(50); // Small delay to allow panel to render
+
+                if (_resultPanel != null)
+                {
+                    await _resultPanel.ExpandAsync();
+                }
+            }
+            else
+            {
+                Snackbar.Add(_lastCreatedResult.ErrorMessage ?? "Failed to regenerate link", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error regenerating link: {ex.Message}", Severity.Error);
+        }
+    }
+}

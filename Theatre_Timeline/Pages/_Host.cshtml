@@ -5,4 +5,6 @@
     Layout = "_Layout";
 }
 
-<component type="typeof(App)" render-mode="ServerPrerendered" />
+@* Using Server render mode instead of ServerPrerendered to avoid MudBlazor provider conflicts
+   that can occur during prerendering when authentication state changes *@
+<component type="typeof(App)" render-mode="Server" />
