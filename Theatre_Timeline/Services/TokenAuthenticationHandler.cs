@@ -158,7 +158,7 @@ namespace Theatre_TimeLine.Services
             {
                 if (string.IsNullOrEmpty(token))
                 {
-                    return Results.BadRequest("No access token provided");
+                    return Results.Redirect("/access-denied.html?reason=No%20access%20token%20provided");
                 }
 
                 // Validate the plaintext token
@@ -166,32 +166,9 @@ namespace Theatre_TimeLine.Services
 
                 if (!validationResult.IsValid || validationResult.Token == null)
                 {
-                    // Return a simple error page for invalid tokens
-                    ctx.Response.ContentType = "text/html";
-                    await ctx.Response.WriteAsync($@"
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Access Denied - Theatre Timeline</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-               display: flex; justify-content: center; align-items: center; min-height: 100vh; 
-               margin: 0; background: #f5f5f5; }}
-        .container {{ text-align: center; padding: 40px; background: white; 
-                     border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; }}
-        h1 {{ color: #d32f2f; margin-bottom: 16px; }}
-        p {{ color: #666; margin-bottom: 8px; }}
-    </style>
-</head>
-<body>
-    <div class='container'>
-        <h1>Access Denied</h1>
-        <p>{validationResult.FailureReason ?? "Invalid or expired access link."}</p>
-        <p>If you believe this is an error, please contact your administrator.</p>
-    </div>
-</body>
-</html>");
-                    return Results.Empty;
+                    // Redirect to the static error page with the reason
+                    var reason = Uri.EscapeDataString(validationResult.FailureReason ?? "Invalid or expired access link.");
+                    return Results.Redirect($"/access-denied.html?reason={reason}");
                 }
 
                 var accessToken = validationResult.Token;
@@ -264,7 +241,7 @@ namespace Theatre_TimeLine.Services
             }).AllowAnonymous();
 
             // Endpoint to clear the auth cookie (logout for token users)
-            app.MapGet("/api/auth/token/logout", (HttpContext ctx) =>
+            app.MapGet("/api/auth/token/logout", (HttpContext ctx, IConfiguration configuration) =>
             {
                 ctx.Response.Cookies.Delete(TokenAuthenticationDefaults.CookieName, new CookieOptions
                 {
@@ -275,7 +252,10 @@ namespace Theatre_TimeLine.Services
                 });
 
                 // Redirect to demo page (doesn't require authentication) instead of /home
-                return Results.Redirect($"/RoadToThere/{TenantManagerService.DemoGuid}");
+                // Use configured demo tenant ID or fall back to a safe default
+                var demoTenantId = configuration.GetValue<string>("TenantManager:DemoTenantId") 
+                    ?? "00000000-0000-0000-0000-3eca75185852";
+                return Results.Redirect($"/RoadToThere/{demoTenantId}");
             }).AllowAnonymous();
 
             return app;

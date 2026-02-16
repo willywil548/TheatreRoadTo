@@ -70,19 +70,24 @@
         StateHasChanged();
     }
 
-    private string GetLogoutTooltip(System.Security.Claims.ClaimsPrincipal user)
+    private string GetLogoutTooltip(System.Security.Claims.ClaimsPrincipal? user)
     {
-        var name = user.Identity?.Name ?? "User";
-        var authType = user.Identity?.AuthenticationType == TokenAuthenticationDefaults.AuthenticationScheme
+        if (user?.Identity == null)
+        {
+            return "Logout";
+        }
+
+        var name = user.Identity.Name ?? "User";
+        var authType = user.Identity.AuthenticationType == TokenAuthenticationDefaults.AuthenticationScheme
             ? "Token Access"
             : "Azure AD";
         return $"Logout ({name} - {authType})";
     }
 
-    private void Logout(System.Security.Claims.ClaimsPrincipal user)
+    private void Logout(System.Security.Claims.ClaimsPrincipal? user)
     {
         // Route to appropriate logout endpoint based on authentication type
-        if (user.Identity?.AuthenticationType == TokenAuthenticationDefaults.AuthenticationScheme)
+        if (user?.Identity?.AuthenticationType == TokenAuthenticationDefaults.AuthenticationScheme)
         {
             NavigationManager.NavigateTo("/api/auth/token/logout", forceLoad: true);
         }

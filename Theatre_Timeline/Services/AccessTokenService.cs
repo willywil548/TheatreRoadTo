@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -119,8 +120,9 @@ namespace Theatre_TimeLine.Services
         private readonly IConfiguration _configuration;
         private readonly SemaphoreSlim _lock = new(1, 1);
 
-        // In-memory index for fast token lookup (hash -> tokenId)
-        private Dictionary<string, Guid>? _tokenHashIndex;
+        // Thread-safe in-memory index for fast token lookup (hash -> tokenId)
+        private ConcurrentDictionary<string, Guid>? _tokenHashIndex;
+        private volatile bool _indexLoaded;
 
         public AccessTokenService(
             IConfiguration configuration,
@@ -129,20 +131,28 @@ namespace Theatre_TimeLine.Services
             _configuration = configuration;
             _logger = logger;
 
-            // Store tokens alongside tenant data
-            var basePath = configuration.GetValue<string>("WebRootPath") ?? "./wwwroot";
+            // Store tokens alongside tenant data using the same path configuration
+            var basePath = configuration.GetValue<string>("TenantManager:DataPath") ?? "./data";
+            
+            // Handle %home% variable (same as TenantManagerService)
+            const string homeVariable = "%home%";
+            if (basePath.StartsWith(homeVariable, StringComparison.OrdinalIgnoreCase))
+            {
+                var home = Environment.GetEnvironmentVariable("home") ?? ".";
+                var homePath = Path.GetFullPath(home);
+                basePath = basePath.Replace(homeVariable, string.Empty, StringComparison.OrdinalIgnoreCase);
+                basePath = Path.Combine(homePath, basePath.Trim('/', '\\'));
+            }
+
             if (!Path.IsPathRooted(basePath))
             {
                 basePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, basePath.TrimStart('.', '/', '\\'));
             }
 
-            _storagePath = Path.Combine(basePath, "tenants", "_tokens");
+            // Tokens are stored inside each tenant's folder as {tenantId}/_tokens/{tokenId}.json
+            _storagePath = basePath;
 
-            if (!Directory.Exists(_storagePath))
-            {
-                Directory.CreateDirectory(_storagePath);
-                _logger.LogInformation("Created token storage directory: {Path}", _storagePath);
-            }
+            _logger.LogInformation("Token storage base path: {Path}", _storagePath);
         }
 
         /// <inheritdoc />
@@ -162,6 +172,12 @@ namespace Theatre_TimeLine.Services
             if (string.IsNullOrWhiteSpace(email))
             {
                 return AccessTokenCreationResult.Failed("Email is required");
+            }
+
+            // Validate email format
+            if (!IsValidEmail(email))
+            {
+                return AccessTokenCreationResult.Failed("Invalid email format");
             }
 
             if (tenantId == Guid.Empty)
@@ -298,17 +314,15 @@ namespace Theatre_TimeLine.Services
                     return false;
                 }
 
+                var oldTokenHash = token.TokenHash;
                 token.IsActive = false;
                 token.RevokedUtc = DateTime.UtcNow;
                 token.RevokedBy = revokedBy;
 
                 await SaveTokenInternalAsync(token);
 
-                // Remove from index
-                if (_tokenHashIndex != null)
-                {
-                    _tokenHashIndex.Remove(token.TokenHash);
-                }
+                // Remove from index after successful save
+                RemoveFromIndex(oldTokenHash);
 
                 _logger.LogInformation(
                     "Token revoked for {StudentName} by {RevokedBy}",
@@ -326,9 +340,8 @@ namespace Theatre_TimeLine.Services
         /// <inheritdoc />
         public async Task<IReadOnlyList<AccessToken>> GetTokensForTenantAsync(Guid tenantId)
         {
-            var tokens = await LoadAllTokensAsync();
+            var tokens = await LoadTokensForTenantAsync(tenantId);
             return tokens
-                .Where(t => t.TenantId == tenantId)
                 .OrderByDescending(t => t.CreatedUtc)
                 .ToList();
         }
@@ -336,9 +349,9 @@ namespace Theatre_TimeLine.Services
         /// <inheritdoc />
         public async Task<IReadOnlyList<AccessToken>> GetTokensForRoadAsync(Guid tenantId, Guid roadId)
         {
-            var tokens = await LoadAllTokensAsync();
+            var tokens = await LoadTokensForTenantAsync(tenantId);
             return tokens
-                .Where(t => t.TenantId == tenantId && t.AuthorizedRoadIds.Contains(roadId))
+                .Where(t => t.AuthorizedRoadIds.Contains(roadId))
                 .OrderByDescending(t => t.CreatedUtc)
                 .ToList();
         }
@@ -419,11 +432,7 @@ namespace Theatre_TimeLine.Services
                     return AccessTokenCreationResult.Failed("Cannot regenerate a revoked token");
                 }
 
-                // Remove old hash from index
-                if (_tokenHashIndex != null)
-                {
-                    _tokenHashIndex.Remove(token.TokenHash);
-                }
+                var oldTokenHash = token.TokenHash;
 
                 // Generate new cryptographically secure token
                 var tokenBytes = RandomNumberGenerator.GetBytes(TokenByteLength);
@@ -439,9 +448,9 @@ namespace Theatre_TimeLine.Services
 
                 await SaveTokenInternalAsync(token);
 
-                // Update index with new hash
-                _tokenHashIndex ??= new Dictionary<string, Guid>();
-                _tokenHashIndex[newTokenHash] = token.TokenId;
+                // Update index after successful save - remove old, add new
+                RemoveFromIndex(oldTokenHash);
+                AddToIndex(newTokenHash, token.TokenId);
 
                 _logger.LogInformation(
                     "Regenerated access token for {StudentName} by {RegeneratedBy}",
@@ -465,6 +474,9 @@ namespace Theatre_TimeLine.Services
             }
 
             var normalizedEmail = email.Trim().ToLowerInvariant();
+            
+            // Note: This still loads all tokens since email lookups span all tenants.
+            // For high-volume scenarios, consider adding an email->tokenIds index.
             var tokens = await LoadAllTokensAsync();
 
             return tokens
@@ -489,9 +501,9 @@ namespace Theatre_TimeLine.Services
             {
                 await SaveTokenInternalAsync(token);
 
-                // Update index
-                _tokenHashIndex ??= new Dictionary<string, Guid>();
-                _tokenHashIndex[token.TokenHash] = token.TokenId;
+                // Update index - ConcurrentDictionary handles thread safety
+                await EnsureIndexLoadedInternalAsync();
+                _tokenHashIndex![token.TokenHash] = token.TokenId;
             }
             finally
             {
@@ -523,7 +535,7 @@ namespace Theatre_TimeLine.Services
 
             foreach (var tenantDir in Directory.GetDirectories(_storagePath))
             {
-                var filePath = Path.Combine(tenantDir, $"{tokenId}.json");
+                var filePath = Path.Combine(tenantDir, "_tokens", $"{tokenId}.json");
                 if (File.Exists(filePath))
                 {
                     var json = await File.ReadAllTextAsync(filePath);
@@ -532,6 +544,41 @@ namespace Theatre_TimeLine.Services
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Loads all tokens for a specific tenant from disk.
+        /// More efficient than LoadAllTokensAsync when you only need one tenant's tokens.
+        /// </summary>
+        private async Task<List<AccessToken>> LoadTokensForTenantAsync(Guid tenantId)
+        {
+            var tokens = new List<AccessToken>();
+            var tokensDir = GetTenantTokensDirectory(tenantId);
+
+            if (!Directory.Exists(tokensDir))
+            {
+                return tokens;
+            }
+
+            var tokenFiles = Directory.GetFiles(tokensDir, "*.json");
+            foreach (var file in tokenFiles)
+            {
+                try
+                {
+                    var json = await File.ReadAllTextAsync(file);
+                    var token = JsonSerializer.Deserialize<AccessToken>(json);
+                    if (token != null)
+                    {
+                        tokens.Add(token);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load token from {File}", file);
+                }
+            }
+
+            return tokens;
         }
 
         private async Task<List<AccessToken>> LoadAllTokensAsync()
@@ -543,9 +590,16 @@ namespace Theatre_TimeLine.Services
                 return tokens;
             }
 
+            // Iterate through all tenant directories
             foreach (var tenantDir in Directory.GetDirectories(_storagePath))
             {
-                var tokenFiles = Directory.GetFiles(tenantDir, "*.json");
+                var tokensDir = Path.Combine(tenantDir, "_tokens");
+                if (!Directory.Exists(tokensDir))
+                {
+                    continue;
+                }
+
+                var tokenFiles = Directory.GetFiles(tokensDir, "*.json");
                 foreach (var file in tokenFiles)
                 {
                     try
@@ -567,14 +621,25 @@ namespace Theatre_TimeLine.Services
             return tokens;
         }
 
+        /// <summary>
+        /// Ensures the index is loaded. Must be called from within a lock.
+        /// </summary>
         private async Task EnsureIndexLoadedAsync()
         {
-            if (_tokenHashIndex != null)
+            await EnsureIndexLoadedInternalAsync();
+        }
+
+        /// <summary>
+        /// Internal implementation of index loading. Assumes caller holds the lock.
+        /// </summary>
+        private async Task EnsureIndexLoadedInternalAsync()
+        {
+            if (_indexLoaded && _tokenHashIndex != null)
             {
                 return;
             }
 
-            _tokenHashIndex = new Dictionary<string, Guid>();
+            _tokenHashIndex = new ConcurrentDictionary<string, Guid>();
             var tokens = await LoadAllTokensAsync();
 
             foreach (var token in tokens.Where(t => t.IsActive))
@@ -582,13 +647,63 @@ namespace Theatre_TimeLine.Services
                 _tokenHashIndex[token.TokenHash] = token.TokenId;
             }
 
+            _indexLoaded = true;
             _logger.LogInformation("Loaded token index with {Count} active tokens", _tokenHashIndex.Count);
+        }
+
+        /// <summary>
+        /// Removes a hash from the index. Thread-safe via ConcurrentDictionary.
+        /// </summary>
+        private void RemoveFromIndex(string tokenHash)
+        {
+            _tokenHashIndex?.TryRemove(tokenHash, out _);
+        }
+
+        /// <summary>
+        /// Adds or updates a hash in the index. Thread-safe via ConcurrentDictionary.
+        /// </summary>
+        private void AddToIndex(string tokenHash, Guid tokenId)
+        {
+            if (_tokenHashIndex != null)
+            {
+                _tokenHashIndex[tokenHash] = tokenId;
+            }
         }
 
         private string GetTokenFilePath(Guid tenantId, Guid tokenId)
         {
-            // Organize by tenant ID
-            return Path.Combine(_storagePath, tenantId.ToString(), $"{tokenId}.json");
+            // Store tokens inside tenant folder: {tenantId}/_tokens/{tokenId}.json
+            return Path.Combine(_storagePath, tenantId.ToString(), "_tokens", $"{tokenId}.json");
+        }
+
+        private string GetTenantTokensDirectory(Guid tenantId)
+        {
+            return Path.Combine(_storagePath, tenantId.ToString(), "_tokens");
+        }
+
+        /// <summary>
+        /// Validates email format using MailAddress parsing.
+        /// </summary>
+        /// <param name="email">The email address to validate.</param>
+        /// <returns><c>true</c> if the email format is valid; otherwise <c>false</c>.</returns>
+        private static bool IsValidEmail(string? email)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                return false;
+            }
+
+            try
+            {
+                // Use MailAddress for validation - it handles edge cases well
+                var addr = new System.Net.Mail.MailAddress(email.Trim());
+                // Ensure the address matches what was parsed (catches some edge cases)
+                return addr.Address.Equals(email.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         private static string MaskEmail(string? email)

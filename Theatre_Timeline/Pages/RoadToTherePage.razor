@@ -129,41 +129,47 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (string.IsNullOrEmpty(TenantId))
+        try
         {
-            UriBuilder uri = new(NavigationManager.BaseUri);
-            uri.Path = $"RoadToThere/{Services.TenantManagerService.DemoGuid}/{Services.TenantManagerService.DemoGuid}";
-            NavigationOptions options = new()
+            if (string.IsNullOrEmpty(TenantId))
             {
-                ForceLoad = true,
-                ReplaceHistoryEntry = true
-            };
-            NavigationManager.NavigateTo(uri.Uri.AbsoluteUri, options);
-            return;
+                UriBuilder uri = new(NavigationManager.BaseUri);
+                uri.Path = $"RoadToThere/{Services.TenantManagerService.DefaultDemoGuid}/{Services.TenantManagerService.DefaultDemoGuid}";
+                NavigationOptions options = new()
+                {
+                    ForceLoad = true,
+                    ReplaceHistoryEntry = true
+                };
+                NavigationManager.NavigateTo(uri.Uri.AbsoluteUri, options);
+                return;
+            }
+
+            // Check if this is the demo tenant (allows anonymous access)
+            _isDemoTenant = string.Equals(TenantId, Services.TenantManagerService.DefaultDemoGuid, StringComparison.OrdinalIgnoreCase);
+
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            _user = authState.User;
+            _isAuthenticated = _user?.Identity?.IsAuthenticated ?? false;
+            _isTokenUser = _user?.IsTokenAuthenticated() ?? false;
+            _tokenId = _user?.GetTokenId();
+            _email = _user?.GetEmail() ?? string.Empty;
+
+            tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId));
+
+            if (tenant == null)
+            {
+                return;
+            }
+
+            // Determine authorization based on auth type
+            await DetermineAuthorizationAsync();
         }
-
-        // Check if this is the demo tenant (allows anonymous access)
-        _isDemoTenant = string.Equals(TenantId, Services.TenantManagerService.DemoGuid, StringComparison.OrdinalIgnoreCase);
-
-        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        _user = authState.User;
-        _isAuthenticated = _user?.Identity?.IsAuthenticated ?? false;
-        _isTokenUser = _user?.IsTokenAuthenticated() ?? false;
-        _tokenId = _user?.GetTokenId();
-        _email = _user?.GetEmail() ?? string.Empty;
-
-        tenant = TenantManagerService.GetTenant(Guid.Parse(TenantId));
-
-        if (tenant == null)
+        finally
         {
+            // Always set loading to false, even if an exception occurs
             _isLoading = false;
-            return;
         }
 
-        // Determine authorization based on auth type
-        await DetermineAuthorizationAsync();
-
-        _isLoading = false;
         await base.OnInitializedAsync();
     }
 

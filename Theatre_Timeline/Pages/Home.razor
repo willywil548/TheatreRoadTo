@@ -122,7 +122,7 @@
 
             foreach (var r in t.Roads)
             {
-                if (string.Equals(r.TenantId, Services.TenantManagerService.DemoGuid))
+                if (string.Equals(r.TenantId, Services.TenantManagerService.DefaultDemoGuid))
                 {
                     roads.Add(r);
                     continue;
@@ -212,7 +212,7 @@
             List<IRoadToThere> roads = new();
             foreach (var r in Tenant.Roads)
             {
-                if (string.Equals(r.TenantId, Services.TenantManagerService.DemoGuid))
+                if (string.Equals(r.TenantId, Services.TenantManagerService.DefaultDemoGuid))
                 {
                     roads.Add(r);
                     continue;
