@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -115,6 +116,9 @@ namespace Theatre_TimeLine.Services
     public class AccessTokenService : IAccessTokenService
     {
         private const int TokenByteLength = 32; // 256-bit tokens
+        private const string ActivitySourceName = "Theatre.AccessTokenService";
+        private static readonly ActivitySource ActivitySource = new(ActivitySourceName);
+        
         private readonly string _storagePath;
         private readonly ILogger<AccessTokenService> _logger;
         private readonly IConfiguration _configuration;
@@ -305,12 +309,16 @@ namespace Theatre_TimeLine.Services
         /// <inheritdoc />
         public async Task<bool> RevokeTokenAsync(Guid tokenId, string revokedBy)
         {
+            using var activity = ActivitySource.StartActivity("RevokeToken");
+            activity?.SetTag("tokenId", tokenId.ToString());
+            
             await _lock.WaitAsync();
             try
             {
                 var token = await LoadTokenByIdAsync(tokenId);
                 if (token == null)
                 {
+                    activity?.SetTag("result", "not_found");
                     return false;
                 }
 
@@ -325,10 +333,12 @@ namespace Theatre_TimeLine.Services
                 RemoveFromIndex(oldTokenHash);
 
                 _logger.LogInformation(
-                    "Token revoked for {StudentName} by {RevokedBy}",
+                    "Token {TokenId} revoked for {StudentName} (admin: {AdminHash})",
+                    tokenId,
                     token.StudentName,
-                    revokedBy);
+                    HashEmailForLogging(revokedBy));
 
+                activity?.SetTag("result", "success");
                 return true;
             }
             finally
@@ -365,12 +375,16 @@ namespace Theatre_TimeLine.Services
         /// <inheritdoc />
         public async Task<bool> UpdateRoadAssignmentsAsync(Guid tokenId, IEnumerable<Guid> roadIds, string updatedBy)
         {
+            using var activity = ActivitySource.StartActivity("UpdateRoadAssignments");
+            activity?.SetTag("tokenId", tokenId.ToString());
+            
             await _lock.WaitAsync();
             try
             {
                 var token = await LoadTokenByIdAsync(tokenId);
                 if (token == null || !token.IsActive)
                 {
+                    activity?.SetTag("result", "not_found_or_inactive");
                     return false;
                 }
 
@@ -378,11 +392,14 @@ namespace Theatre_TimeLine.Services
                 await SaveTokenInternalAsync(token);
 
                 _logger.LogInformation(
-                    "Updated road assignments for {StudentName}: {RoadCount} roads (by {UpdatedBy})",
+                    "Token {TokenId} road assignments updated for {StudentName}: {RoadCount} roads (admin: {AdminHash})",
+                    tokenId,
                     token.StudentName,
                     token.AuthorizedRoadIds.Count,
-                    updatedBy);
+                    HashEmailForLogging(updatedBy));
 
+                activity?.SetTag("result", "success");
+                activity?.SetTag("roadCount", token.AuthorizedRoadIds.Count);
                 return true;
             }
             finally
@@ -418,17 +435,22 @@ namespace Theatre_TimeLine.Services
         /// <inheritdoc />
         public async Task<AccessTokenCreationResult> RegenerateTokenAsync(Guid tokenId, string regeneratedBy)
         {
+            using var activity = ActivitySource.StartActivity("RegenerateToken");
+            activity?.SetTag("tokenId", tokenId.ToString());
+            
             await _lock.WaitAsync();
             try
             {
                 var token = await LoadTokenByIdAsync(tokenId);
                 if (token == null)
                 {
+                    activity?.SetTag("result", "not_found");
                     return AccessTokenCreationResult.Failed("Token not found");
                 }
 
                 if (!token.IsActive)
                 {
+                    activity?.SetTag("result", "token_revoked");
                     return AccessTokenCreationResult.Failed("Cannot regenerate a revoked token");
                 }
 
@@ -453,10 +475,12 @@ namespace Theatre_TimeLine.Services
                 AddToIndex(newTokenHash, token.TokenId);
 
                 _logger.LogInformation(
-                    "Regenerated access token for {StudentName} by {RegeneratedBy}",
+                    "Token {TokenId} regenerated for {StudentName} (admin: {AdminHash})",
+                    tokenId,
                     token.StudentName,
-                    regeneratedBy);
+                    HashEmailForLogging(regeneratedBy));
 
+                activity?.SetTag("result", "success");
                 return AccessTokenCreationResult.Succeeded(token, plaintextToken);
             }
             finally
@@ -726,14 +750,6 @@ namespace Theatre_TimeLine.Services
             
             // Use first 8 bytes (16 hex chars) - enough for correlation, not too long for logs
             return Convert.ToHexString(bytes, 0, 8).ToLowerInvariant();
-        }
-
-        private static string MaskEmail(string? email)
-        {
-            if (string.IsNullOrEmpty(email)) return "[empty]";
-            var atIndex = email.IndexOf('@');
-            if (atIndex <= 0) return "[invalid]";
-            return $"{email[0]}***@{email[atIndex + 1]}***";
         }
 
         #endregion
