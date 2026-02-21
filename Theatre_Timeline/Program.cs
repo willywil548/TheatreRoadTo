@@ -96,9 +96,12 @@ if (hasAzureAdConfig)
                 return TokenAuthenticationDefaults.AuthenticationScheme;
             }
 
-            // Otherwise use OpenID Connect (Azure AD)
-            return OpenIdConnectDefaults.AuthenticationScheme;
+            // Otherwise use cookie auth (which is set up by Microsoft Identity)
+            return CookieAuthenticationDefaults.AuthenticationScheme;
         };
+
+        // Always challenge with OpenID Connect (Azure AD)
+        options.ForwardChallenge = OpenIdConnectDefaults.AuthenticationScheme;
     });
 
     builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme, options =>
