@@ -219,9 +219,9 @@ namespace Theatre_TimeLine.Services
                 await SaveTokenAsync(accessToken);
 
                 _logger.LogInformation(
-                    "Created access token for {StudentName} ({Email}) with access to {RoadCount} roads",
+                    "Created access token for {StudentName} (email hash: {EmailHash}) with access to {RoadCount} roads",
                     studentName,
-                    MaskEmail(email),
+                    HashEmailForLogging(email),
                     accessToken.AuthorizedRoadIds.Count);
 
                 // Return token and plaintext - caller builds the full URL using NavigationManager
@@ -229,7 +229,7 @@ namespace Theatre_TimeLine.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to create access token for {Email}", MaskEmail(email));
+                _logger.LogError(ex, "Failed to create access token (email hash: {EmailHash})", HashEmailForLogging(email));
                 return AccessTokenCreationResult.Failed("Failed to create access token");
             }
         }
@@ -704,6 +704,28 @@ namespace Theatre_TimeLine.Services
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Creates a consistent, non-reversible hash of an email for logging purposes.
+        /// The same email will always produce the same hash, allowing log correlation
+        /// without exposing PII.
+        /// </summary>
+        /// <param name="email">The email address to hash.</param>
+        /// <returns>A short hash string suitable for logging.</returns>
+        private static string HashEmailForLogging(string? email)
+        {
+            if (string.IsNullOrEmpty(email))
+            {
+                return "[no-email]";
+            }
+
+            // Normalize email before hashing for consistency
+            var normalized = email.Trim().ToLowerInvariant();
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+            
+            // Use first 8 bytes (16 hex chars) - enough for correlation, not too long for logs
+            return Convert.ToHexString(bytes, 0, 8).ToLowerInvariant();
         }
 
         private static string MaskEmail(string? email)
