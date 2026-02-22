@@ -15,94 +15,105 @@ else
 {
     <MudPaper Class="pa-2">
         <MudText Typo="Typo.subtitle1">User Management</MudText>
-        <MudList T="string">
-            <MudListItem>Manager Group: <b>@_managerGroup</b></MudListItem>
-            <MudListItem>User Group: <b>@_userGroup</b></MudListItem>
-            <MudListItem>Global Admins: <b>@SecurityGroupNameBuilder.GlobalAdminsGroup</b></MudListItem>
-        </MudList>
 
-        <MudGrid Class="my-2">
-            <MudItem xs="12" sm="6" md="5">
-                <MudTextField @bind-Value="_userEmail" Label="User email" Dense="true" />
-            </MudItem>
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" Class="mt-2">
+            <!-- Tab 1: External Users (Token-based Access) - Default -->
+            <MudTabPanel Text="External Access Links" Icon="@Icons.Material.Filled.Link">
+                <ExternalAccessManager TenantContainer="@TenantContainer" />
+            </MudTabPanel>
 
-            <MudItem xs="12" sm="6" md="3">
-                <MudSelect T="string" Label="Security level" Dense="true" @bind-Value="_selectedRole">
-                    <MudSelectItem T="string" Value="@RoleUser">User</MudSelectItem>
-                    <MudSelectItem T="string" Value="@RoleManager">Manager</MudSelectItem>
-                    <MudSelectItem T="string" Value="@RoleRoadUser">Road User</MudSelectItem>
-                </MudSelect>
-            </MudItem>
+            <!-- Tab 2: Azure AD Users (Directory Members) -->
+            <MudTabPanel Text="Directory Users" Icon="@Icons.Material.Filled.People">
+                <MudList T="string">
+                    <MudListItem>Manager Group: <b>@_managerGroup</b></MudListItem>
+                    <MudListItem>User Group: <b>@_userGroup</b></MudListItem>
+                    <MudListItem>Global Admins: <b>@SecurityGroupNameBuilder.GlobalAdminsGroup</b></MudListItem>
+                </MudList>
 
-            <MudItem xs="12" sm="6" md="3">
-                <MudSelect T="Guid?" Label="Road (for Road User)" Dense="true"
-                           @bind-Value="_selectedRoadId"
-                           Disabled="@IsRoadPickerDisabled">
-                    @foreach (var r in TenantContainer.Roads)
-                    {
-                        <MudSelectItem T="Guid?" Value="@r.RoadId">@r.Title</MudSelectItem>
-                    }
-                </MudSelect>
-            </MudItem>
+                <MudGrid Class="my-2">
+                    <MudItem xs="12" sm="6" md="5">
+                        <MudTextField @bind-Value="_userEmail" Label="User email" Dense="true" />
+                    </MudItem>
 
-            <MudItem xs="12" sm="12" md="1" Class="d-flex align-center">
-                <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!_isApplyEnabled)"
-                           OnClick="InviteOrAdd">
-                    Apply
-                </MudButton>
-            </MudItem>
-        </MudGrid>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudSelect T="string" Label="Security level" Dense="true" @bind-Value="_selectedRole">
+                            <MudSelectItem T="string" Value="@RoleUser">User</MudSelectItem>
+                            <MudSelectItem T="string" Value="@RoleManager">Manager</MudSelectItem>
+                            <MudSelectItem T="string" Value="@RoleRoadUser">Road User</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
 
-        @if (_pendingInvites.Count > 0)
-        {
-            <MudExpansionPanels Elevation="0" Class="mb-2">
-                <MudExpansionPanel Text="@($"Pending Invitations ({_pendingInvites.Count})")" Expanded="true">
-                    <MudTable Items="@_pendingInvites" Dense="true">
-                        <HeaderContent>
-                            <MudTh>Email</MudTh>
-                            <MudTh>Target Group</MudTh>
-                            <MudTh>Status</MudTh>
-                            <MudTh>Attempts</MudTh>
-                            <MudTh></MudTh>
-                        </HeaderContent>
-                        <RowTemplate>
-                            <MudTd>@context.Email</MudTd>
-                            <MudTd>@context.Group</MudTd>
-                            <MudTd>@context.Status</MudTd>
-                            <MudTd>@context.Attempts</MudTd>
-                            <MudTd>
-                                <MudButton Variant="Variant.Text" OnClick="@(() => RetryInviteAsync(context))">Retry now</MudButton>
-                            </MudTd>
-                        </RowTemplate>
-                    </MudTable>
-                </MudExpansionPanel>
-            </MudExpansionPanels>
-        }
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudSelect T="Guid?" Label="Road (for Road User)" Dense="true"
+                                   @bind-Value="_selectedRoadId"
+                                   Disabled="@IsRoadPickerDisabled">
+                            @foreach (var r in TenantContainer.Roads)
+                            {
+                                <MudSelectItem T="Guid?" Value="@r.RoadId">@r.Title</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
 
-        <MudExpansionPanels Elevation="0">
-            <MudExpansionPanel Text="@($"Tenant Managers ({_managerCount})")">
-                <UserGroupMembers GroupName="@_managerGroup" OnChanged="UpdateCountsAsync" />
-            </MudExpansionPanel>
-            <MudExpansionPanel Text="@($"Tenant Users ({_userCount})")">
-                <UserGroupMembers GroupName="@_userGroup" OnChanged="UpdateCountsAsync" />
-            </MudExpansionPanel>
-            <MudExpansionPanel Text="Road Groups">
-                <MudTable Items="@TenantContainer.Roads" Hover="true" Dense="true">
-                    <HeaderContent>
-                        <MudTh>Road</MudTh>
-                        <MudTh>Group</MudTh>
-                        <MudTh></MudTh>
-                    </HeaderContent>
-                    <RowTemplate>
-                        <MudTd>@context.Title</MudTd>
-                        <MudTd>@SecurityGroupNameBuilder.TenantRoadUser(TenantContainer.TenantId, context.RoadId)</MudTd>
-                        <MudTd>
-                            <MudButton Variant="Variant.Text" OnClick="@(() => EnsureRoadGroup(context.RoadId))">Create</MudButton>
-                        </MudTd>
-                    </RowTemplate>
-                </MudTable>
-            </MudExpansionPanel>
-        </MudExpansionPanels>
+                    <MudItem xs="12" sm="12" md="1" Class="d-flex align-center">
+                        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!_isApplyEnabled)"
+                                   OnClick="InviteOrAdd">
+                            Apply
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+
+                @if (_pendingInvites.Count > 0)
+                {
+                    <MudExpansionPanels Elevation="0" Class="mb-2">
+                        <MudExpansionPanel Text="@($"Pending Invitations ({_pendingInvites.Count})")" Expanded="true">
+                            <MudTable Items="@_pendingInvites" Dense="true">
+                                <HeaderContent>
+                                    <MudTh>Email</MudTh>
+                                    <MudTh>Target Group</MudTh>
+                                    <MudTh>Status</MudTh>
+                                    <MudTh>Attempts</MudTh>
+                                    <MudTh></MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd>@context.Email</MudTd>
+                                    <MudTd>@context.Group</MudTd>
+                                    <MudTd>@context.Status</MudTd>
+                                    <MudTd>@context.Attempts</MudTd>
+                                    <MudTd>
+                                        <MudButton Variant="Variant.Text" OnClick="@(() => RetryInviteAsync(context))">Retry now</MudButton>
+                                    </MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        </MudExpansionPanel>
+                    </MudExpansionPanels>
+                }
+
+                <MudExpansionPanels Elevation="0">
+                    <MudExpansionPanel Text="@($"Tenant Managers ({_managerCount})")">
+                        <UserGroupMembers GroupName="@_managerGroup" OnChanged="UpdateCountsAsync" />
+                    </MudExpansionPanel>
+                    <MudExpansionPanel Text="@($"Tenant Users ({_userCount})")">
+                        <UserGroupMembers GroupName="@_userGroup" OnChanged="UpdateCountsAsync" />
+                    </MudExpansionPanel>
+                    <MudExpansionPanel Text="Road Groups">
+                        <MudTable Items="@TenantContainer.Roads" Hover="true" Dense="true">
+                            <HeaderContent>
+                                <MudTh>Road</MudTh>
+                                <MudTh>Group</MudTh>
+                                <MudTh></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>@context.Title</MudTd>
+                                <MudTd>@SecurityGroupNameBuilder.TenantRoadUser(TenantContainer.TenantId, context.RoadId)</MudTd>
+                                <MudTd>
+                                    <MudButton Variant="Variant.Text" OnClick="@(() => EnsureRoadGroup(context.RoadId))">Create</MudButton>
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
+            </MudTabPanel>
+        </MudTabs>
     </MudPaper>
 }
 

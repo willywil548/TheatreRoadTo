@@ -97,7 +97,7 @@ namespace Theatre_TimeLine.Contracts
             out RequiredSecurityLevel requiredSecurityLevel)
         {
             requiredSecurityLevel = RequiredSecurityLevel.NotAuthorized;
-            if (string.Equals(road.TenantId, TenantManagerService.DemoGuid))
+            if (string.Equals(road.TenantId, TenantManagerService.DefaultDemoGuid))
             {
                 return true;
             }

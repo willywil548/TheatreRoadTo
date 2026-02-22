@@ -5,4 +5,21 @@
     Layout = "_Layout";
 }
 
-<component type="typeof(App)" render-mode="ServerPrerendered" />
+@*
+   We intentionally use Server render mode instead of ServerPrerendered here.
+   When using ServerPrerendered, MudBlazor root providers such as MudThemeProvider
+   and other JS-interop–driven services (dialogs, snackbars, popovers) are created
+   during the prerendering pass before the authenticated user and circuit are fully
+   established. On reconnect, these providers are reinitialized with a different
+   authentication state, which has caused inconsistent theming, duplicate provider
+   instances, and occasional JS interop errors.
+   We tested ServerPrerendered and confirmed these issues only occur during the
+   prerender phase with MudBlazor's providers. Alternatives such as deferring
+   MudBlazor provider initialization, moving them out of the prerendered tree, or
+   splitting the app into a prerendered shell plus an interactive MudBlazor region
+   were evaluated but would have required larger structural changes.
+   To prioritize stability over the initial perceived load-time benefit, we keep the
+   App component in pure Server mode here. If the MudBlazor provider behavior during
+   prerendering is improved in the future, this can be revisited.
+*@
+<component type="typeof(App)" render-mode="Server" />

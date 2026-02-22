@@ -5,12 +5,19 @@
 @inherits LayoutComponentBase
 @inject ISecurityGroupService SecurityGroupService
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject IClipboardService ClipboardService
 
 <MudCard Class="card">
     <MudCardHeader Class="card card-header">@this.TenantContainer.TenantName</MudCardHeader>
     <MudCardContent>
         <h6>
             ID: <MudLink Href="@GetTenantRoadLink()" Underline="Underline.Always">@TenantContainer.TenantId</MudLink>
+            <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                           Size="Size.Small"
+                           Title="Copy link to clipboard"
+                           OnClick="CopyTenantLink" />
         </h6>
         Description:
         <p>
@@ -21,7 +28,7 @@
             @foreach (IRoadToThere road in this.authorizedRoads)
             {
                 <MudExpansionPanel Text="@road.ToString()">
-                    <RoadConfiguration Road="@road" OnSaveRoad="@OnSaveRoad" OnRemoveRoad="@OnRemoveRoad" />
+                    <RoadConfiguration Road="@road" OnSaveRoad="@OnSaveRoad" OnRemoveRoad="@HandleRemoveRoad" />
                 </MudExpansionPanel>
                 <br />
             }
@@ -62,25 +69,35 @@
                 return ctx.Result?.User.GetEmail() ?? string.Empty;
             })
             .ConfigureAwait(false);
-            IList<IRoadToThere> roads = new List<IRoadToThere>();
-            foreach (var road in TenantContainer.Roads)
-            {
-                var has = await SecurityGroupService
-                    .HasRequiredPerms(
-                        RequiredSecurityLevel.TenantManager | RequiredSecurityLevel.Global,
-                        email,
-                        road.TenantId,
-                        road.RoadId);
-                if (has)
-                {
-                    roads.Add(road);
-                }
-            }
-
-            this.authorizedRoads = new List<IRoadToThere>(roads);
+            
+            await LoadAuthorizedRoadsAsync();
         }
 
         await base.OnAfterRenderAsync(firstRender);
+    }
+
+    /// <summary>
+    /// Loads the roads the current user is authorized to manage.
+    /// </summary>
+    private async Task LoadAuthorizedRoadsAsync()
+    {
+        IList<IRoadToThere> roads = new List<IRoadToThere>();
+        foreach (var road in TenantContainer.Roads)
+        {
+            var has = await SecurityGroupService
+                .HasRequiredPerms(
+                    RequiredSecurityLevel.TenantManager | RequiredSecurityLevel.Global,
+                    email,
+                    road.TenantId,
+                    road.RoadId);
+            if (has)
+            {
+                roads.Add(road);
+            }
+        }
+
+        this.authorizedRoads = new List<IRoadToThere>(roads);
+        await InvokeAsync(StateHasChanged);
     }
 
     [Parameter]
@@ -107,13 +124,15 @@
         buttonText = Tuple.Create(id, tenantActions[id]);
     }
 
-    private void ButtonClicked()
+    private async Task ButtonClicked()
     {
         OnClick?.Invoke(TenantContainer);
         switch (buttonText.Item1)
         {
             case 0:
                 OnCreateRoad?.Invoke(TenantContainer);
+                // Refresh the roads list after creation
+                await LoadAuthorizedRoadsAsync();
                 break;
             case 1:
                 OnRemoveTenant?.Invoke(TenantContainer);
@@ -121,8 +140,22 @@
         }
     }
 
+    private void HandleRemoveRoad(Guid roadId)
+    {
+        OnRemoveRoad?.Invoke(roadId);
+        // Refresh the roads list after removal (fire and forget, UI will update)
+        _ = LoadAuthorizedRoadsAsync();
+    }
+
     private string GetTenantRoadLink()
     {
         return $"/RoadToThere/{TenantContainer.TenantId}";
+    }
+
+    private async Task CopyTenantLink()
+    {
+        var fullUrl = NavigationManager.ToAbsoluteUri(GetTenantRoadLink()).ToString();
+        await ClipboardService.CopyToClipboard(fullUrl);
+        Snackbar.Add("Link copied to clipboard", Severity.Success);
     }
 }
