@@ -14,6 +14,7 @@
 @inject IAccessTokenService AccessTokenService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JS
+@inject IDialogService DialogService
 
 @if (_isLoading)
 {
@@ -92,14 +93,8 @@
     </div>
 </MudTabs>
 
-<MudPopover Open="@open" Class="pa-4" Fixed="false" AnchorOrigin="Origin.CenterCenter">
-    <AddressEditor @ref="addressEditor" AddressChanged="OnAddressChange" Road="road" Address="address" />
-</MudPopover>
-
 @code {
     private ITenantContainer? tenant;
-    private bool open = false;
-    private AddressEditor addressEditor = new();
     private string _email = string.Empty;
     private bool _isAuthorized = false;
     private bool _isLoading = true;
@@ -119,10 +114,6 @@
     public string? RoadId { get; set; } = string.Empty;
 
     private MudTabs? mudTabs;
-
-    private IRoadToThere? road;
-
-    private IAddress? address = new Address();
 
     // Store the nearest block id for scrolling
     private string? nearestBlockId;
@@ -352,15 +343,6 @@
         return new DateTime(dt.Year, dt.Month, dt.Day, dt.Hour, dt.Minute, 0);
     }
 
-    private async Task OnAddressChange(object sender)
-    {
-        this.road = null;
-        this.open = false;
-        this.address = new Address();
-        NavigationManager.Refresh();
-        await Task.CompletedTask;
-    }
-
     private async Task OnTabChangedAsync(int tabIndex)
     {
         if (mudTabs == null)
@@ -389,28 +371,58 @@
             return;
         }
 
-        this.road = road;
-        this.open = true;
-        await Task.CompletedTask;
+        var parameters = new DialogParameters<AddressEditorDialog>
+        {
+            { x => x.Road, road },
+            { x => x.Address, new Address() },
+            { x => x.IsNewAddress, true }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true,
+            Position = DialogPosition.Center
+        };
+
+        var dialog = await DialogService.ShowAsync<AddressEditorDialog>("Create Address", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+        {
+            NavigationManager.Refresh();
+        }
     }
 
     private async Task OnEditAddress(IRoadToThere? road, IAddress? address)
     {
-        if (road == null)
+        if (road == null || address == null)
         {
             return;
         }
 
-        if (address == null)
+        var parameters = new DialogParameters<AddressEditorDialog>
         {
-            return;
+            { x => x.Road, road },
+            { x => x.Address, address },
+            { x => x.IsNewAddress, false }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true,
+            Position = DialogPosition.Center
+        };
+
+        var dialog = await DialogService.ShowAsync<AddressEditorDialog>("Edit Address", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+        {
+            NavigationManager.Refresh();
         }
-
-        this.address = address;
-
-        this.road = road;
-        this.open = true;
-
-        await Task.CompletedTask;
     }
 }

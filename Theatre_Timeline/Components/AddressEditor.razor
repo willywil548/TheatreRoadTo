@@ -8,7 +8,7 @@
     <MudSelect @bind-Value="addressType" Label="Post Type?" HelperText="Notification, Video, Social Media" >
         @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
         {
-            <MudSelectItem Value="@item">@item</MudSelectItem>
+            <MudSelectItem Value="@item">@item.ToDisplayString()</MudSelectItem>
         }
     </MudSelect>
     <!-- Location -->
@@ -28,7 +28,7 @@
             <MudSelect @bind-Value="@pollType" Label="Poll Type:" HelperText="Muliple Choice, Yes or No">
                 @foreach (PollType pollingType in Enum.GetValues(typeof(PollType)))
                 {
-                    <MudSelectItem Value="@pollingType">@pollingType</MudSelectItem>
+                    <MudSelectItem Value="@pollingType">@pollingType.ToDisplayString()</MudSelectItem>
                 }
             </MudSelect>
             <MudTextField T="string" Label="Question" Variant="Variant.Text" TextChanged="AddQuestionText" />
