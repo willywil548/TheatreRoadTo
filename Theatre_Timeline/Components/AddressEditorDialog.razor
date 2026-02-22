@@ -1,0 +1,243 @@
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Models
+@namespace Theatre_TimeLine.Components
+
+@inject ITenantManagerService TenantManagerService
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsNewAddress ? Icons.Material.Filled.Add : Icons.Material.Filled.Edit)" Class="mr-3 mb-n1" />
+            @(IsNewAddress ? "Create Address" : "Edit Address")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <!-- Post Type -->
+        <MudSelect @bind-Value="addressType" Label="Post Type?" HelperText="Notification, Video, Social Media">
+            @foreach (AddressType item in Enum.GetValues(typeof(AddressType)))
+            {
+                <MudSelectItem Value="@item">@item.ToDisplayString()</MudSelectItem>
+            }
+        </MudSelect>
+
+        <!-- Location -->
+        <MudDatePicker Label="Date of Event" @bind-Date="Address.Location" Class="mt-3" />
+        <MudTimePicker Label="Time of Event" AmPm="true" TimeChanged="OnTimeChange" Time="Address?.Location?.TimeOfDay" Class="mt-3" />
+
+        <!-- Title of Location -->
+        <MudTextField @bind-Value="Address.Title" Label="Title" Variant="Variant.Text" Class="mt-3" />
+
+        <!-- Description of Location -->
+        <MudTextField @bind-Value="Address.Description" Label="Description" Variant="Variant.Text" Class="mt-3" />
+
+        <!-- Poll -->
+        @if (addressType == AddressType.Survey)
+        {
+            <MudSelect @bind-Value="@pollType" Label="Poll Type:" HelperText="Multiple Choice, Yes or No" Class="mt-3">
+                @foreach (PollType pollingType in Enum.GetValues(typeof(PollType)))
+                {
+                    <MudSelectItem Value="@pollingType">@pollingType.ToDisplayString()</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField T="string" Label="Question" Variant="Variant.Text" TextChanged="AddQuestionText" Class="mt-3" />
+            <div style="display:@showOptions" class="mt-2">
+                @foreach (string option in poll.Options)
+                {
+                    <MudChip T="string" Color="Color.Primary" Class="mr-1">@option</MudChip>
+                }
+                <div class="d-flex align-center gap-2 mt-2">
+                    <MudTextField Label="New Option:" Variant="Variant.Text" @bind-Value="pollOptionText" />
+                    <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddPollOption" Size="Size.Small" />
+                </div>
+            </div>
+        }
+        else
+        {
+            <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text" Class="mt-3" />
+        }
+
+        <MudCheckBox @bind-Value="Address.DelayRelease" Label="Delay Release" Class="mt-3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="SaveAddress" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+        @if (!IsNewAddress)
+        {
+            <MudButton OnClick="DeleteAddress" Color="Color.Error" Variant="Variant.Outlined">Delete</MudButton>
+        }
+        <MudButton OnClick="Cancel" Color="Color.Default" Variant="Variant.Text">Cancel</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance? MudDialog { get; set; }
+
+    [Parameter]
+    public IAddress Address { get; set; } = new Address();
+
+    [Parameter]
+    public IRoadToThere Road { get; set; } = new RoadToThere();
+
+    /// <summary>
+    /// Explicitly indicates whether this is a new address being created.
+    /// This is more reliable than trying to infer from Address properties.
+    /// </summary>
+    [Parameter]
+    public bool IsNewAddress { get; set; } = true;
+
+    private event EventHandler<AddressType>? AddressTypeChanged;
+
+    private AddressType addressType
+    {
+        get => Address.AddressType;
+        set
+        {
+            if (Address.AddressType == value)
+            {
+                return;
+            }
+
+            Address.AddressType = value;
+            AddressTypeChanged?.Invoke(this, value);
+        }
+    }
+
+    #region Poll Fields and Properties
+
+    private Poll poll = new Poll();
+    private string showOptions => poll != null && poll.PollType == PollType.MultipleChoice ? "" : "none";
+
+    private PollType pollType
+    {
+        get => poll.PollType;
+        set => SetPollType(value);
+    }
+
+    private string pollOptionText = string.Empty;
+
+    #endregion
+
+    protected override Task OnInitializedAsync()
+    {
+        AddressTypeChanged += OnAddressTypeChanged;
+
+        // Ensure poll type is set from the existing poll when editing
+        if (Address.TryGetPoll(out Poll existingPoll))
+        {
+            poll = existingPoll;
+        }
+
+        return base.OnInitializedAsync();
+    }
+
+    private void SetPollType(PollType pollType)
+    {
+        if (Address.AddressType != AddressType.Survey)
+        {
+            return;
+        }
+
+        poll.PollType = pollType;
+        Address.SetPollType(poll);
+        StateHasChanged();
+    }
+
+    private void AddQuestionText(string? question)
+    {
+        if (string.IsNullOrEmpty(question))
+        {
+            return;
+        }
+
+        poll.Question = question;
+        Address.SetPollQuestion(poll);
+        StateHasChanged();
+    }
+
+    private void AddPollOption()
+    {
+        if (string.IsNullOrEmpty(pollOptionText))
+        {
+            return;
+        }
+
+        poll.Options = poll.Options.Concat(new[] { pollOptionText }).ToList();
+        Address.SetPollOptions(poll);
+        pollOptionText = string.Empty;
+        Address.SetPoll(poll);
+        StateHasChanged();
+    }
+
+    private void SaveAddress()
+    {
+        List<IAddress> addresses = new List<IAddress>(Road.Addresses);
+
+        // Set the poll content if it is a PollAddress
+        if (Address.AddressType == AddressType.Survey)
+        {
+            AddPollOption();
+            Address.SetPoll(poll);
+        }
+
+        if (addresses.Any(a => a.Equals(Address)))
+        {
+            // If the address already exists, remove it first
+            addresses.Remove(Address);
+        }
+
+        // Save address
+        addresses.Add(Address);
+        Road.Addresses = addresses.Cast<Address>().ToArray();
+
+        // Save to file
+        TenantManagerService.SaveRoad(Road);
+
+        MudDialog?.Close(DialogResult.Ok(true));
+    }
+
+    private void DeleteAddress()
+    {
+        List<IAddress> addresses = new List<IAddress>(Road.Addresses.Where(a => !a.Equals(Address)));
+        Road.Addresses = addresses.Cast<Address>().ToArray();
+
+        // Save to file
+        TenantManagerService.SaveRoad(Road);
+
+        MudDialog?.Close(DialogResult.Ok(true));
+    }
+
+    private void Cancel()
+    {
+        MudDialog?.Cancel();
+    }
+
+    private void OnTimeChange(TimeSpan? time)
+    {
+        if (time == null || Address.Location == null)
+        {
+            return;
+        }
+
+        Address.Location = Address.Location.Value.Date.Add(time.Value);
+    }
+
+    private void OnAddressTypeChanged(object? sender, AddressType addressType)
+    {
+        if (addressType == AddressType.Survey)
+        {
+            if (Address is not PollAddress)
+            {
+                Address = new PollAddress();
+            }
+
+            return;
+        }
+
+        if (Address is PollAddress)
+        {
+            Address = new Address();
+        }
+
+        StateHasChanged();
+    }
+}
