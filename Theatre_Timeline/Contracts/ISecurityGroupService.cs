@@ -120,7 +120,7 @@ namespace Theatre_TimeLine.Contracts
                 return false;
             }
 
-            if (string.Equals(tenantId.ToString(), TenantManagerService.DemoGuid))
+            if (string.Equals(tenantId.ToString(), TenantManagerService.DefaultDemoGuid))
             {
                 return true;
             }

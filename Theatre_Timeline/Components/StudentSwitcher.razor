@@ -1,0 +1,143 @@
+@using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Services
+@inject IAccessTokenService AccessTokenService
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider Auth
+
+@* 
+    StudentSwitcher Component
+    Shows a dropdown for parents/guardians who have multiple students.
+    Allows switching between individual students.
+    Only shows students from the same tenant as the current token.
+*@
+
+@if (_isTokenUser && _studentTokens.Count > 0)
+{
+    <div class="student-switcher">
+        @if (_studentTokens.Count == 1)
+        {
+            @* Single student - just show the name *@
+            <MudChip T="string" 
+                     Size="Size.Small" 
+                     Color="Color.Primary" 
+                     Variant="Variant.Outlined"
+                     Class="student-chip">
+                <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Class="mr-1" />
+                @_currentStudentName
+            </MudChip>
+        }
+        else
+        {
+            @* Multiple students - show dropdown to switch between them *@
+            <MudMenu Icon="@Icons.Material.Filled.People" 
+                     Color="Color.Primary"
+                     Variant="Variant.Outlined"
+                     Size="Size.Small"
+                     Dense="true"
+                     AnchorOrigin="Origin.BottomRight"
+                     TransformOrigin="Origin.TopRight"
+                     AriaLabel="Switch student">
+                <ActivatorContent>
+                    <MudChip T="string" 
+                             Size="Size.Small" 
+                             Color="Color.Primary" 
+                             Variant="Variant.Outlined"
+                             Class="student-chip clickable">
+                        <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Class="mr-1" />
+                        @_currentStudentName
+                        <MudIcon Icon="@Icons.Material.Filled.ArrowDropDown" Size="Size.Small" />
+                    </MudChip>
+                </ActivatorContent>
+                <ChildContent>
+                    @foreach (var token in _studentTokens)
+                    {
+                        <MudMenuItem OnClick="@(() => SwitchToStudent(token))">
+                            <div class="d-flex align-center">
+                                <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Class="mr-2" />
+                                <span>@token.StudentName</span>
+                                @if (_currentTokenId == token.TokenId)
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Class="ml-2" Color="Color.Success" />
+                                }
+                            </div>
+                        </MudMenuItem>
+                    }
+                </ChildContent>
+            </MudMenu>
+        }
+    </div>
+}
+
+<style>
+    .student-switcher {
+        display: inline-flex;
+        align-items: center;
+    }
+    
+    .student-chip {
+        cursor: default;
+    }
+    
+    .student-chip.clickable {
+        cursor: pointer;
+    }
+    
+    .student-chip.clickable:hover {
+        background-color: rgba(var(--mud-palette-primary-rgb), 0.1);
+    }
+</style>
+
+@code {
+    private bool _isTokenUser;
+    private List<AccessToken> _studentTokens = new();
+    private Guid? _currentTokenId;
+    private Guid? _currentTenantId;
+    private string _currentStudentName = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        _isTokenUser = user.IsTokenAuthenticated();
+
+        if (_isTokenUser)
+        {
+            var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+            _currentTokenId = user.GetTokenId();
+            _currentTenantId = user.GetTokenTenantId();
+
+            if (!string.IsNullOrEmpty(email) && _currentTenantId.HasValue)
+            {
+                // Load all tokens for this email, filtered to the current tenant only
+                var allTokens = await AccessTokenService.GetTokensByEmailAsync(email);
+                _studentTokens = allTokens
+                    .Where(t => t.TenantId == _currentTenantId.Value)
+                    .ToList();
+            }
+
+            // Set current student name
+            var currentToken = _studentTokens.FirstOrDefault(t => t.TokenId == _currentTokenId);
+            _currentStudentName = currentToken?.StudentName ?? user.Identity?.Name ?? "Student";
+        }
+    }
+
+    private void SwitchToStudent(AccessToken token)
+    {
+        if (token.TokenId == _currentTokenId)
+        {
+            return; // Already selected
+        }
+
+        _currentTokenId = token.TokenId;
+        _currentStudentName = token.StudentName;
+
+        // Navigate to token auth endpoint to switch the cookie
+        NavigationManager.NavigateTo($"/api/auth/token/{token.TokenId}", forceLoad: true);
+    }
+
+    /// <summary>
+    /// Gets all student tokens for this user in the current tenant.
+    /// </summary>
+    public IReadOnlyList<AccessToken> GetAllStudentTokens() => _studentTokens;
+}

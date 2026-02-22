@@ -11,13 +11,19 @@ namespace Theatre_TimeLine.Services
     internal sealed class TenantManagerService : ITenantManagerService
     {
         /// <summary>
-        /// The GUID used for the demo tenant.
+        /// The default GUID used for the demo tenant if not configured.
         /// </summary>
-        public const string DemoGuid = "00000000-0000-0000-0000-3eca75185852";
+        public const string DefaultDemoGuid = "00000000-0000-0000-0000-3eca75185852";
+
+        /// <summary>
+        /// Gets the configured demo tenant GUID.
+        /// </summary>
+        public string DemoTenantId { get; }
 
         private const string HomeVariable = "%home%";
         private static readonly SemaphoreSlim writeManager = new(1, 1);
-        private const string configurationKey = "TenantManager:DataPath";
+        private const string dataPathConfigKey = "TenantManager:DataPath";
+        private const string demoTenantIdConfigKey = "TenantManager:DemoTenantId";
         private const string tenantConfigurationFile = "TenantConfiguration.json";
         private readonly string dataPath;
         private readonly ISecurityGroupService? _securityGroups;
@@ -31,7 +37,10 @@ namespace Theatre_TimeLine.Services
         {
             this._securityGroups = securityGroups;
 
-            string? dataPath = configuration.GetValue<string>(configurationKey);
+            // Read demo tenant ID from configuration or use default
+            this.DemoTenantId = configuration.GetValue<string>(demoTenantIdConfigKey) ?? DefaultDemoGuid;
+
+            string? dataPath = configuration.GetValue<string>(dataPathConfigKey);
             if (string.IsNullOrEmpty(dataPath))
             {
                 dataPath = "./webapps/data";
@@ -224,15 +233,15 @@ namespace Theatre_TimeLine.Services
                 TenantName = "Demo",
                 Description = "Demo Road to highlight some capabilities.",
                 AdminSecurityGroup = "Demo-RoadToThere",
-                TenantId = Guid.Parse(DemoGuid),
-                TenantPath = Path.Combine(this.dataPath, DemoGuid)
+                TenantId = Guid.Parse(DemoTenantId),
+                TenantPath = Path.Combine(this.dataPath, DemoTenantId)
             };
 
             this.CreateTenant(tenant);
 
             IRoadToThere roadToThere = new RoadToThere
             {
-                RoadId = Guid.Parse(DemoGuid),
+                RoadId = Guid.Parse(DemoTenantId),
                 Description = "Road from start to finish",
                 TenantId = tenant.TenantId,
                 EndTime = DateTime.Now.AddDays(365),
