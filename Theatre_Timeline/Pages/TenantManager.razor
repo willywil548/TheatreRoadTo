@@ -9,73 +9,250 @@
 @inject ISecurityGroupService SecurityGroupService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject IClipboardService ClipboardService
 @implements IRoadToThereManager
 @attribute [Authorize]
 @page "/TenantManagement/{Tenant?}"
 
 @if (_isLoading)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
-    <MudText>Loading permissions...</MudText>
+    <MudContainer MaxWidth="MaxWidth.Small" Class="d-flex flex-column align-center justify-center" Style="min-height: 50vh;">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        <MudText Typo="Typo.body1" Class="mt-4">Loading permissions...</MudText>
+    </MudContainer>
 }
 else
 {
-    <MudMenu Icon="@Icons.Material.Filled.MoreVert"
-             style="fixed;"
-             AriaLabel="Open user menu">
-        @if (_isGlobalAdmin)
+    <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-4">
+        @* Header with Tenant Selector *@
+        <MudPaper Elevation="0" Class="pa-4 mb-4">
+            <MudGrid>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudSelect T="Guid?"
+                               Label="Select Tenant"
+                               Value="_selectedTenantId"
+                               ValueChanged="OnTenantSelected"
+                               Variant="Variant.Outlined"
+                               AnchorOrigin="Origin.BottomCenter"
+                               Dense="true"
+                               Clearable="true">
+                        @foreach (var tenant in _authorizedTenants)
+                        {
+                            <MudSelectItem T="Guid?" Value="@tenant.TenantId">
+                                @tenant.TenantName
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="8" Class="d-flex align-center gap-2">
+                    @if (_isGlobalAdmin)
+                    {
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Add"
+                                   OnClick="CreateTenant">
+                            New Tenant
+                        </MudButton>
+                    }
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+
+        @if (_selectedTenant != null)
         {
-            <MudMenuItem Label="Create Tenant" OnClick="CreateTenant" />
+            @* Tenant Header Info Card *@
+            <MudPaper Elevation="2" Class="pa-4 mb-4">
+                <div class="d-flex flex-wrap justify-space-between align-center gap-2">
+                    <div>
+                        <MudText Typo="Typo.h5">@_selectedTenant.TenantName</MudText>
+                        @if (!string.IsNullOrWhiteSpace(_selectedTenant.Description))
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@_selectedTenant.Description</MudText>
+                        }
+                        <div class="d-flex align-center gap-1 mt-1">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">ID:</MudText>
+                            <MudLink Typo="Typo.caption" Href="@($"/RoadToThere/{_selectedTenant.TenantId}")" Target="_blank">
+                                @_selectedTenant.TenantId
+                            </MudLink>
+                            <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                           Size="Size.Small"
+                                           Title="Copy tenant link"
+                                           OnClick="CopyTenantLink" />
+                        </div>
+                    </div>
+                    <MudButton Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.OpenInNew"
+                               Href="@($"/RoadToThere/{_selectedTenant.TenantId}")"
+                               Target="_blank">
+                        Open Tenant
+                    </MudButton>
+                </div>
+            </MudPaper>
+
+            @* Main Tabbed Interface *@
+            <MudTabs Elevation="2"
+                     Rounded="true"
+                     ApplyEffectsToContainer="true"
+                     PanelClass="pa-4"
+                     @bind-ActivePanelIndex="_activeTabIndex">
+
+                @* Tab 1: Roads Management *@
+                <MudTabPanel Text="Roads" Icon="@Icons.Material.Filled.Route" BadgeData="@_selectedTenant.Roads.Count()" BadgeColor="Color.Primary">
+                    <MudStack Spacing="3">
+                        <div class="d-flex flex-wrap justify-space-between align-center gap-2">
+                            <MudText Typo="Typo.h6">Manage Roads</MudText>
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="() => CreateRoad(_selectedTenant)">
+                                Create Road
+                            </MudButton>
+                        </div>
+
+                        @if (!_selectedTenant.Roads.Any())
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                                No roads created yet. Create your first road to get started.
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudExpansionPanels MultiExpansion="false">
+                                @foreach (var road in _selectedTenant.Roads)
+                                {
+                                    <MudExpansionPanel MaxHeight="1500">
+                                        <TitleContent>
+                                            <div class="d-flex flex-wrap align-center gap-2">
+                                                <MudIcon Icon="@Icons.Material.Filled.Timeline" Size="Size.Small" />
+                                                <MudText Typo="Typo.body1"><strong>@road.Title</strong></MudText>
+                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">
+                                                    @road.StartTime?.ToString("MMM dd") - @road.EndTime?.ToString("MMM dd, yyyy")
+                                                </MudChip>
+                                            </div>
+                                        </TitleContent>
+                                        <ChildContent>
+                                            <RoadConfiguration Road="@road"
+                                                               OnSaveRoad="@SaveRoad"
+                                                               OnRemoveRoad="@RemoveRoad" />
+                                        </ChildContent>
+                                    </MudExpansionPanel>
+                                }
+                            </MudExpansionPanels>
+                        }
+                    </MudStack>
+                </MudTabPanel>
+
+                @* Tab 2: User Management *@
+                <MudTabPanel Text="Users" Icon="@Icons.Material.Filled.People">
+                    <CascadingAuthenticationState>
+                        <TenantUserManagement TenantContainer="@_selectedTenant" />
+                    </CascadingAuthenticationState>
+                </MudTabPanel>
+
+                @* Tab 3: Tenant Settings *@
+                <MudTabPanel Text="Settings" Icon="@Icons.Material.Filled.Settings">
+                    <MudStack Spacing="4">
+                        <MudText Typo="Typo.h6">Tenant Settings</MudText>
+
+                        <MudTextField Value="@_selectedTenant.TenantName"
+                                      Label="Tenant Name"
+                                      ReadOnly="true"
+                                      Variant="Variant.Outlined" />
+
+                        <MudTextField Value="@_selectedTenant.Description"
+                                      Label="Description"
+                                      ReadOnly="true"
+                                      Lines="3"
+                                      Variant="Variant.Outlined" />
+
+                        <MudTextField Value="@_selectedTenant.TenantId.ToString()"
+                                      Label="Tenant ID"
+                                      ReadOnly="true"
+                                      Variant="Variant.Outlined"
+                                      Adornment="Adornment.End"
+                                      AdornmentIcon="@Icons.Material.Filled.ContentCopy"
+                                      OnAdornmentClick="CopyTenantId" />
+
+                        <MudDivider Class="my-4" />
+
+                        @* Danger Zone *@
+                        <MudPaper Elevation="0" Class="pa-4" Style="border: 2px solid var(--mud-palette-error); border-radius: 4px;">
+                            <div class="d-flex align-center gap-2 mb-2">
+                                <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Error" />
+                                <MudText Typo="Typo.subtitle1" Color="Color.Error">Danger Zone</MudText>
+                            </div>
+                            <MudText Typo="Typo.body2" Class="mb-3">
+                                Deleting a tenant will permanently remove all roads, user assignments, and data associated with this tenant.
+                                <strong>This action cannot be undone.</strong>
+                            </MudText>
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Error"
+                                       StartIcon="@Icons.Material.Filled.DeleteForever"
+                                       OnClick="() => ConfirmRemoveTenant(_selectedTenant)">
+                                Delete Tenant
+                            </MudButton>
+                        </MudPaper>
+                    </MudStack>
+                </MudTabPanel>
+            </MudTabs>
         }
-
-        <MudMenuItem Label="Logout" OnClick="Logout" />
-    </MudMenu>
-
-    <MudPaper Elevation="0" Style="overflow:auto; position:relative; min-height:75vh" Square="true">
-        <div class="d-flex justify-center align-center mud-height-full mud-width-full">
-            <MudExpansionPanels>
-                @foreach (var container in _authorizedTenants)
+        else if (_authorizedTenants.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+                <MudText>You don't have access to any tenants yet.</MudText>
+                @if (_isGlobalAdmin)
                 {
-                    <MudExpansionPanel Text="@container.TenantName" Expanded="ShouldOpenPanel(container.TenantId.ToString())" ExpandedChanged="(changedArgs) => OnPanelChange(tenantId: container.TenantId.ToString(), changedArgs)">
-                        <CascadingAuthenticationState>
-                            <TenantConfiguration TenantContainer="@container"
-                                                 OnCreateRoad="CreateRoad"
-                                                 OnRemoveTenant="RemoveTenantHandler"
-                                                 OnSaveRoad="SaveRoad"
-                                                 OnRemoveRoad="RemoveRoad"
-                                                 OnClick="(tenant) => this.Tenant = tenant.TenantId.ToString()" />
-                        </CascadingAuthenticationState>
-                        <MudDivider Class="my-2" />
-                        <TenantUserManagement TenantContainer="@container" />
-                    </MudExpansionPanel>
-
-                    <br />
+                    <MudText Class="mt-2">Use the <strong>New Tenant</strong> button above to create your first tenant.</MudText>
                 }
-            </MudExpansionPanels>
-        </div>
-    </MudPaper>
+                else
+                {
+                    <MudText Class="mt-2">Contact a Global Admin to grant you access to a tenant.</MudText>
+                }
+            </MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+                Select a tenant from the dropdown above to manage its roads and users.
+            </MudAlert>
+        }
+    </MudContainer>
 }
 
 @code {
-    private bool _drawerOpen = true;
-    private string userEmail = string.Empty;
     private bool _isLoading = true;
     private bool _isGlobalAdmin = false;
+    private string _userEmail = string.Empty;
     private List<ITenantContainer> _authorizedTenants = new();
+    private ITenantContainer? _selectedTenant;
+    private Guid? _selectedTenantId;
+    private int _activeTabIndex = 0;
 
     [Parameter]
-    public string? Tenant { get; set; } = string.Empty;
+    public string? Tenant { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
         await base.OnInitializedAsync();
-        
-        ClaimsPrincipal user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-        userEmail = user.GetEmail();
 
-        // Load permissions once, asynchronously
+        ClaimsPrincipal user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        _userEmail = user.GetEmail();
+
         await LoadPermissionsAsync();
-        
+
+        // Select tenant from URL parameter if provided
+        if (!string.IsNullOrEmpty(Tenant) && Guid.TryParse(Tenant, out var tenantId))
+        {
+            _selectedTenantId = tenantId;
+            _selectedTenant = _authorizedTenants.FirstOrDefault(t => t.TenantId == tenantId);
+        }
+        else if (_authorizedTenants.Count == 1)
+        {
+            // Auto-select if user only has access to one tenant
+            _selectedTenantId = _authorizedTenants[0].TenantId;
+            _selectedTenant = _authorizedTenants[0];
+        }
+
         _isLoading = false;
     }
 
@@ -84,30 +261,26 @@ else
     /// </summary>
     private async Task LoadPermissionsAsync()
     {
-        // Check global admin once
         _isGlobalAdmin = await SecurityGroupService.HasRequiredPerms(
-            RequiredSecurityLevel.Global, 
-            userEmail, 
-            Guid.Empty, 
+            RequiredSecurityLevel.Global,
+            _userEmail,
+            Guid.Empty,
             Guid.Empty);
 
-        // Filter tenants the user can manage
         var allTenants = TenantManagerService.GetTenants();
         var authorizedList = new List<ITenantContainer>();
 
         foreach (var container in allTenants)
         {
-            // Global admins can see all tenants
             if (_isGlobalAdmin)
             {
                 authorizedList.Add(container);
                 continue;
             }
 
-            // Check tenant manager permission
             var canManage = await SecurityGroupService.HasRequiredPerms(
                 RequiredSecurityLevel.TenantManager,
-                userEmail,
+                _userEmail,
                 container.TenantId,
                 Guid.Empty);
 
@@ -120,52 +293,70 @@ else
         _authorizedTenants = authorizedList;
     }
 
-    private void Logout()
-        => NavigationManager.NavigateTo("MicrosoftIdentity/Account/SignOut", forceLoad: true);
+    private void OnTenantSelected(Guid? tenantId)
+    {
+        _selectedTenantId = tenantId;
+        _selectedTenant = tenantId.HasValue
+            ? _authorizedTenants.FirstOrDefault(t => t.TenantId == tenantId.Value)
+            : null;
+
+        // Update URL without full reload
+        if (_selectedTenantId.HasValue)
+        {
+            NavigationManager.NavigateTo($"/TenantManagement/{_selectedTenantId}", replace: true);
+        }
+        else
+        {
+            NavigationManager.NavigateTo("/TenantManagement", replace: true);
+        }
+
+        _activeTabIndex = 0; // Reset to Roads tab when switching tenants
+    }
 
     public void CreateRoad(ITenantContainer tenantContainer)
     {
-        RoadToThere roadToThere = new RoadToThere()
-            {
-                RoadId = Guid.NewGuid(),
-                TenantId = tenantContainer.TenantId,
-                Title = "Test Road title",
-            };
+        var roadToThere = new RoadToThere
+        {
+            RoadId = Guid.NewGuid(),
+            TenantId = tenantContainer.TenantId,
+            Title = "New Road",
+            StartTime = DateTime.Now,
+            EndTime = DateTime.Now.AddDays(30)
+        };
         tenantContainer.SaveRoad(roadToThere);
+        TenantManagerService.SaveRoad(roadToThere);
+        Snackbar.Add("Road created successfully.", Severity.Success);
+        StateHasChanged();
     }
 
     /// <summary>
     /// Save the road to the tenant.
     /// </summary>
-    /// <param name="roadToThere"><see cref="RoadToThere"/>.</param>
     public void SaveRoad(IRoadToThere roadToThere)
     {
         TenantManagerService.SaveRoad(roadToThere);
-        this.StateHasChanged();
+        Snackbar.Add("Road saved.", Severity.Success);
+        StateHasChanged();
     }
 
     /// <summary>
     /// Remove the road from the tenant.
     /// </summary>
-    /// <param name="roadId">Road ID.</param>
     public void RemoveRoad(Guid roadId)
     {
         TenantManagerService.RemoveRoad(roadId);
-        this.StateHasChanged();
+        Snackbar.Add("Road removed.", Severity.Info);
+        StateHasChanged();
     }
 
-    /// <summary>
-    /// Get the road from the tenant.
-    /// </summary>
-    /// <param name="roadId">Road ID.</param>
-    /// <returns><see cref="IRoadToThere"/>.</returns>
+    /// <inheritdoc />
     public IRoadToThere GetRoad(Guid roadId) => TenantManagerService.GetRoad(roadId);
 
     private async Task CreateTenant()
     {
         if (!_isGlobalAdmin)
         {
-            Snackbar.Add("Only Roads-Admin can create tenants.", Severity.Warning);
+            Snackbar.Add("Only Global Admins can create tenants.", Severity.Warning);
             return;
         }
 
@@ -192,71 +383,82 @@ else
 
         if (result.Data is CreateTenantDialog.CreateTenantResult tenantResult)
         {
-            TenantManagerService.CreateTenant(new TenantContainer()
+            var newTenant = new TenantContainer
             {
                 TenantId = Guid.NewGuid(),
                 Description = tenantResult.Description,
                 TenantName = tenantResult.TenantName
-            });
+            };
+
+            TenantManagerService.CreateTenant(newTenant);
             Snackbar.Add($"Tenant '{tenantResult.TenantName}' created successfully.", Severity.Success);
-            
-            // Reload permissions to include new tenant
+
             await LoadPermissionsAsync();
-            this.StateHasChanged();
+
+            // Auto-select the newly created tenant
+            _selectedTenantId = newTenant.TenantId;
+            _selectedTenant = _authorizedTenants.FirstOrDefault(t => t.TenantId == newTenant.TenantId);
+            StateHasChanged();
         }
     }
 
-    private void RemoveTenantHandler(ITenantContainer tenantContainer)
+    private async Task ConfirmRemoveTenant(ITenantContainer tenantContainer)
     {
-        // Fire and forget - we can't use async directly in Action callback
-        _ = RemoveTenantAsync(tenantContainer);
+        var parameters = new DialogParameters<MudMessageBox>
+        {
+            { x => x.Title, "Confirm Delete" },
+            { x => x.Message, $"Are you sure you want to delete the tenant '{tenantContainer.TenantName}'? This will permanently delete all roads and data. This action cannot be undone." },
+            { x => x.YesText, "Delete" },
+            { x => x.NoText, "Cancel" }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Small
+        };
+
+        var dialog = await DialogService.ShowAsync<MudMessageBox>("Confirm Delete", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+        {
+            await RemoveTenantAsync(tenantContainer);
+        }
     }
 
     private async Task RemoveTenantAsync(ITenantContainer tenantContainer)
     {
         if (!_isGlobalAdmin && !_authorizedTenants.Any(t => t.TenantId == tenantContainer.TenantId))
         {
-            Snackbar.Add("Only Roads-Admin or TenantManagers can remove tenants.", Severity.Warning);
+            Snackbar.Add("You don't have permission to remove this tenant.", Severity.Warning);
             return;
         }
 
         TenantManagerService.RemoveTenant(tenantContainer.TenantId);
-        
-        // Reload permissions after removal
+        Snackbar.Add($"Tenant '{tenantContainer.TenantName}' has been deleted.", Severity.Info);
+
+        _selectedTenant = null;
+        _selectedTenantId = null;
+
         await LoadPermissionsAsync();
         await InvokeAsync(StateHasChanged);
     }
 
-    private bool TryGetTenantContainer(out ITenantContainer? tenantContainer)
+    private async Task CopyTenantLink()
     {
-        tenantContainer = null;
-        if (!string.IsNullOrEmpty(this.Tenant) && Guid.TryParse(this.Tenant, out Guid result))
-        {
-            tenantContainer = TenantManagerService.GetTenant(result);
-        }
+        if (_selectedTenant == null) return;
 
-        return tenantContainer != null;
+        var fullUrl = NavigationManager.ToAbsoluteUri($"/RoadToThere/{_selectedTenant.TenantId}").ToString();
+        await ClipboardService.CopyToClipboard(fullUrl);
+        Snackbar.Add("Tenant link copied to clipboard.", Severity.Success);
     }
 
-    private bool ShouldOpenPanel(string tenant)
+    private async Task CopyTenantId()
     {
-        if (string.IsNullOrEmpty(this.Tenant))
-        {
-            return false;
-        }
+        if (_selectedTenant == null) return;
 
-        return string.Equals(tenant, this.Tenant);
-    }
-
-    private void OnPanelChange(string tenantId, bool expanding)
-    {
-        if (!expanding)
-        {
-            return;
-        }
-
-        UriBuilder uri = new(NavigationManager.BaseUri);
-        uri.Path = $"TenantManagement/{tenantId}";
-        NavigationManager.NavigateTo(uri.Uri.AbsoluteUri);
+        await ClipboardService.CopyToClipboard(_selectedTenant.TenantId.ToString());
+        Snackbar.Add("Tenant ID copied to clipboard.", Severity.Success);
     }
 }

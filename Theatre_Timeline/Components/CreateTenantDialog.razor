@@ -1,10 +1,11 @@
+@using System.Text.RegularExpressions
 @using Theatre_TimeLine.Contracts
 @namespace Theatre_TimeLine.Components
 
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">
-            <MudIcon Icon="@Icons.Material.Filled.Add" Class="mr-3 mb-n1" />
+            <MudIcon Icon="@Icons.Material.Filled.Business" Class="mr-3 mb-n1" />
             Create New Tenant
         </MudText>
     </TitleContent>
@@ -12,28 +13,47 @@
         <MudForm @ref="_form" @bind-IsValid="_isValid">
             <MudTextField @bind-Value="_tenantName"
                           Label="Tenant Name"
+                          Placeholder="e.g., Drama Academy, Theatre Club"
                           Required="true"
                           RequiredError="Tenant name is required"
                           Validation="@(new Func<string, string?>(ValidateTenantName))"
                           Immediate="true"
-                          HelperText="Enter a unique name for the tenant" />
+                          AutoFocus="true"
+                          Variant="Variant.Outlined"
+                          HelperText="Enter a unique name for the tenant (2-100 characters)"
+                          Counter="100"
+                          MaxLength="100"
+                          Class="mb-4" />
             <MudTextField @bind-Value="_description"
                           Label="Description"
+                          Placeholder="Brief description of what this tenant is for..."
                           Lines="3"
-                          HelperText="Optional description for the tenant" />
+                          Variant="Variant.Outlined"
+                          HelperText="Optional description for the tenant"
+                          Counter="500"
+                          MaxLength="500" />
         </MudForm>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Primary" 
-                   OnClick="Submit" 
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   OnClick="Submit"
                    Disabled="@(!_isValid || string.IsNullOrWhiteSpace(_tenantName))">
-            Create
+            Create Tenant
         </MudButton>
     </DialogActions>
 </MudDialog>
 
 @code {
+    private static readonly string[] ReservedNames = 
+    [
+        "admin", "administrator", "system", "default", "demo", "test", 
+        "null", "undefined", "root", "tenant", "tenants"
+    ];
+
+    private static readonly Regex ValidNamePattern = new(@"^[\w\s\-\.\,\&\'\(\)]+$", RegexOptions.Compiled);
+
     [CascadingParameter]
     private IMudDialogInstance? MudDialog { get; set; }
 
@@ -49,23 +69,45 @@
     {
         if (string.IsNullOrWhiteSpace(name))
         {
-            return "Tenant name cannot be empty";
+            return "Tenant name is required";
         }
 
-        if (name.Length < 2)
+        var trimmedName = name.Trim();
+
+        if (trimmedName.Length < 2)
         {
             return "Tenant name must be at least 2 characters";
         }
 
-        if (name.Length > 100)
+        if (trimmedName.Length > 100)
         {
             return "Tenant name cannot exceed 100 characters";
         }
 
-        if (ExistingTenantNames.Any(existing => 
-            string.Equals(existing, name.Trim(), StringComparison.OrdinalIgnoreCase)))
+        // Check for valid characters (letters, numbers, spaces, common punctuation)
+        if (!ValidNamePattern.IsMatch(trimmedName))
+        {
+            return "Tenant name contains invalid characters. Use only letters, numbers, spaces, and common punctuation (- . , & ' ( ))";
+        }
+
+        // Check for reserved names
+        if (ReservedNames.Any(reserved => 
+            string.Equals(reserved, trimmedName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"'{trimmedName}' is a reserved name and cannot be used";
+        }
+
+        // Check for duplicate names
+        if (ExistingTenantNames.Any(existing =>
+            string.Equals(existing, trimmedName, StringComparison.OrdinalIgnoreCase)))
         {
             return "A tenant with this name already exists";
+        }
+
+        // Check for names that are just whitespace or special chars after trim
+        if (string.IsNullOrWhiteSpace(trimmedName.Replace("-", "").Replace(".", "").Replace(",", "")))
+        {
+            return "Tenant name must contain at least some letters or numbers";
         }
 
         return null;
