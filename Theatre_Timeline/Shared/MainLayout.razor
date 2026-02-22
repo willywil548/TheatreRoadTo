@@ -26,12 +26,16 @@
 </AuthorizeView>
 
 <div class="page">
-    @if (showNavMenu)
-    {
-        <div class="sidebar">
-            <NavMenu />
-        </div>
-    }
+    <AuthorizeView>
+        <Authorized>
+            @if (IsEntraUser(context.User))
+            {
+                <div class="sidebar">
+                    <NavMenu />
+                </div>
+            }
+        </Authorized>
+    </AuthorizeView>
 
     <main>
         <article class="content px-4">
@@ -41,28 +45,14 @@
 </div>
 
 @code {
-    private bool showNavMenu = false;
-
-    [Inject]
-    private IJSRuntime JS { get; set; } = default!;
-
     [Inject]
     private NavigationManager NavigationManager { get; set; } = default!;
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    private bool IsEntraUser(System.Security.Claims.ClaimsPrincipal? user)
     {
-        if (firstRender)
-        {
-            // Register JS event listener for toggling nav menu
-            await JS.InvokeVoidAsync("registerNavMenuToggle", DotNetObjectReference.Create(this));
-        }
-    }
-
-    [JSInvokable]
-    public void ToggleNavMenu()
-    {
-        showNavMenu = !showNavMenu;
-        StateHasChanged();
+        // Show nav menu only for Entra (Azure AD) authenticated users
+        return user?.Identity?.IsAuthenticated == true &&
+               user.Identity.AuthenticationType != TokenAuthenticationDefaults.AuthenticationScheme;
     }
 
     private string GetLogoutTooltip(System.Security.Claims.ClaimsPrincipal? user)
