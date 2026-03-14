@@ -49,6 +49,19 @@ namespace Theatre_TimeLine.Controllers
                     return Unauthorized(new { error = "Invalid webhook source", reason = result.ValidationReason });
                 }
 
+                if (!result.Saved)
+                {
+                    return Ok(new
+                    {
+                        message = "Email acknowledged but not saved",
+                        reason = result.ValidationReason,
+                        from = result.From,
+                        subject = result.Subject,
+                        spamScore = result.SpamScore,
+                        saved = result.Saved
+                    });
+                }
+
                 return Ok(new
                 {
                     message = "Email received, validated, encrypted, and saved successfully",
@@ -56,7 +69,8 @@ namespace Theatre_TimeLine.Controllers
                     from = result.From,
                     subject = result.Subject,
                     spamScore = result.SpamScore,
-                    validated = result.IsValid
+                    validated = result.IsValid,
+                    saved = result.Saved
                 });
             }
             catch (Exception ex)
