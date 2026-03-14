@@ -12,6 +12,9 @@
     [CascadingParameter]
     public EventCallback<IAddress> OnEditAddress { get; set; }
 
+    [CascadingParameter(Name = "RenderContentOnRight")]
+    public bool RenderContentOnRight { get; set; } = true;
+
     private protected Color GetColor(IAddress? address)
     {
         if (address == null)

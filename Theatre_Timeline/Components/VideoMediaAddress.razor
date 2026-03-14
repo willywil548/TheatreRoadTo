@@ -1,42 +1,85 @@
 ﻿@namespace Theatre_TimeLine.Components
-@using System.Text.RegularExpressions
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Services
 @inherits AddressBase
 
-<MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
-    <ItemOpposite>
-        <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
-    </ItemOpposite>
-    <ItemContent>
-        <MudCard Outlined="true" Class="p-2">
-            <MudCardContent>
-                <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
-                <br />
-                <iframe width="560" height="315" src="@YouTubeSrc" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-            </MudCardContent>
+@if (RenderContentOnRight)
+{
+    <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
+        <ItemOpposite>
+            <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
+        </ItemOpposite>
+        <ItemContent>
+            <MudCard Outlined="true" Class="p-2">
+                <MudCardContent>
+                    <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
+                    <br />
+                    @if (!string.IsNullOrWhiteSpace(YouTubeEmbedSrc))
+                    {
+                        <iframe width="560" height="315" src="@YouTubeEmbedSrc" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Warning">Invalid or unsupported video URL.</MudText>
+                        @if (!string.IsNullOrWhiteSpace(Address?.Content))
+                        {
+                            <MudLink Href="@Address.Content" Target="_blank" Rel="noopener noreferrer">@Address.Content</MudLink>
+                        }
+                    }
+                </MudCardContent>
 
-            <CascadingValue Value="Address" IsFixed="true">
-                <AddressEditMenuItem />
-            </CascadingValue>
-        </MudCard>
-    </ItemContent>
-</MudTimelineItem>
+                <CascadingValue Value="Address" IsFixed="true">
+                    <AddressEditMenuItem />
+                </CascadingValue>
+            </MudCard>
+        </ItemContent>
+    </MudTimelineItem>
+}
+else
+{
+    <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
+        <ItemContent>
+            <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
+        </ItemContent>
+        <ItemOpposite>
+            <MudCard Outlined="true" Class="p-2">
+                <MudCardContent>
+                    <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
+                    <br />
+                    @if (!string.IsNullOrWhiteSpace(YouTubeEmbedSrc))
+                    {
+                        <iframe width="560" height="315" src="@YouTubeEmbedSrc" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Warning">Invalid or unsupported video URL.</MudText>
+                        @if (!string.IsNullOrWhiteSpace(Address?.Content))
+                        {
+                            <MudLink Href="@Address.Content" Target="_blank" Rel="noopener noreferrer">@Address.Content</MudLink>
+                        }
+                    }
+                </MudCardContent>
+
+                <CascadingValue Value="Address" IsFixed="true">
+                    <AddressEditMenuItem />
+                </CascadingValue>
+            </MudCard>
+        </ItemOpposite>
+    </MudTimelineItem>
+}
 
 @code {
-    private string YouTubeSrc => ExtractYouTubeSrc(Address?.Content);
+    private string YouTubeEmbedSrc => BuildYouTubeEmbed(Address?.Content);
 
-    private string ExtractYouTubeSrc(string? embedCode)
+    private string BuildYouTubeEmbed(string? input)
     {
-        if (string.IsNullOrWhiteSpace(embedCode))
-        {
-            return string.Empty;
-        }
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
 
-        var match = Regex.Match(
-            embedCode,
-            "src\\s*=\\s*\"([^\"]+)\"",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        return match.Success ? match.Groups[1].Value : string.Empty;
+        var id = YouTubeUrlParser.ExtractVideoId(input);
+        if (string.IsNullOrEmpty(id)) return string.Empty;
+
+        // Build a privacy-enhanced embed using youtube-nocookie and disable related videos & branding
+        return $"https://www.youtube-nocookie.com/embed/{id}?rel=0&modestbranding=1&controls=1";
     }
 }

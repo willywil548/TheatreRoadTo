@@ -5,6 +5,7 @@
 @using Theatre_TimeLine.Components
 @using Theatre_TimeLine.Services
 @using System.Security.Claims
+@using System.Diagnostics
 
 @page "/RoadToThere/{TenantId?}/{RoadId?}"
 
@@ -15,6 +16,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JS
 @inject IDialogService DialogService
+@inject IWebHostEnvironment Env
 
 @if (_isLoading)
 {
@@ -62,7 +64,7 @@
             <MudTabPanel Text="@road?.Title" ID="road?.RoadId">
                 <MudText>@road?.Description</MudText>
                 <div class="image-center-container">
-                    <img src="@road?.Banner" alt="@road?.Description" class="banner-img" />
+                    <img src="@GetBannerUrl(road)" alt="@road?.Description" class="banner-img" />
                 </div>
 
                 @if (!_isTokenUser && _isAuthenticated)
@@ -78,14 +80,14 @@
                             .OrderBy(a => a.Location ?? DateTime.MaxValue)
                             .ToArray();
                         int blockCount = road.Duration + 1;
-                    }
-                    @for (int i = 0; i < blockCount; i++)
-                    {
-                        Address? address = orderedAddresses.Length > i ? orderedAddresses[i] : null;
-                        string blockId = address?.Location != null
-                            ? $"block-{address.Location.Value:yyyyMMddHHmm}"
-                            : $"block-{i}";
-                        <Block Road="road" BlockIndex="i" Class="align-content-center" OnEditAddress="(address) => OnEditAddress(road, address)" Id="@blockId" />
+                        for (int i = 0; i < blockCount; i++)
+                        {
+                            Address? address = orderedAddresses.Length > i ? orderedAddresses[i] : null;
+                            string blockId = address?.Location != null
+                                ? $"block-{address.Location.Value:yyyyMMddHHmm}"
+                                : $"block-{i}";
+                            <Block Road="road" BlockIndex="i" OnEditAddress="(address) => OnEditAddress(road, address)" Id="@blockId" />
+                        }
                     }
                 </MudTimeline>
             </MudTabPanel>
@@ -118,10 +120,17 @@
     // Store the nearest block id for scrolling
     private string? nearestBlockId;
 
+    // Cached default banner data URL
+    private static string? _defaultBannerDataUrl;
+    private static readonly object _defaultBannerLock = new();
+
     protected override async Task OnInitializedAsync()
     {
         try
         {
+            // Ensure default banner data URL is loaded (only once)
+            EnsureDefaultBannerLoaded();
+
             if (string.IsNullOrEmpty(TenantId))
             {
                 UriBuilder uri = new(NavigationManager.BaseUri);
@@ -162,6 +171,46 @@
         }
 
         await base.OnInitializedAsync();
+    }
+
+    private void EnsureDefaultBannerLoaded()
+    {
+        lock (_defaultBannerLock)
+        {
+            if (!string.IsNullOrEmpty(_defaultBannerDataUrl))
+            {
+                return;
+            }
+
+            try
+            {
+                string webRoot = Env.WebRootPath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
+                string defaultPath = Path.Combine(webRoot, "images", "Default.png");
+                if (File.Exists(defaultPath))
+                {
+                    using (var fs = File.OpenRead(defaultPath))
+                    {
+                        using (var ms = new MemoryStream())
+                        {
+                            fs.CopyTo(ms);
+                            byte[] data = ms.ToArray();
+                            string base64 = Convert.ToBase64String(data);
+                            _defaultBannerDataUrl = $"data:image/png;base64,{base64}";
+                        }
+                    }
+                }
+                else
+                {
+                    // Fallback to an empty data URL (transparent 1x1 PNG)
+                    _defaultBannerDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Failed to load default banner: {ex.Message}");
+                _defaultBannerDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+            }
+        }
     }
 
     private async Task DetermineAuthorizationAsync()
@@ -424,5 +473,44 @@
         {
             NavigationManager.Refresh();
         }
+    }
+
+    private string GetBannerUrl(IRoadToThere? r)
+    {
+        // Default banner data URL already loaded
+        if (!string.IsNullOrEmpty(_defaultBannerDataUrl))
+        {
+            // If no banner specified, return embedded default
+            if (r == null || string.IsNullOrWhiteSpace(r.Banner))
+            {
+                return _defaultBannerDataUrl;
+            }
+        }
+
+        var defaultBannerPath = "/images/Default.png";
+
+        if (r == null || string.IsNullOrWhiteSpace(r.Banner))
+        {
+            return defaultBannerPath;
+        }
+
+        var b = r.Banner.Trim();
+
+        // Data URLs and absolute URLs are used as-is
+        if (b.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+            b.StartsWith("http:", StringComparison.OrdinalIgnoreCase) ||
+            b.StartsWith("https:", StringComparison.OrdinalIgnoreCase))
+        {
+            return b;
+        }
+
+        // If the stored banner is a rooted path, return as-is
+        if (b.StartsWith("/"))
+        {
+            return b;
+        }
+
+        // Otherwise assume relative to web root
+        return b.StartsWith("~/") ? b.Substring(1) : "/" + b;
     }
 }

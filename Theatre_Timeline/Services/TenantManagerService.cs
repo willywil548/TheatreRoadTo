@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Globalization;
 using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Models;
 
@@ -27,6 +28,10 @@ namespace Theatre_TimeLine.Services
         private const string tenantConfigurationFile = "TenantConfiguration.json";
         private readonly string dataPath;
         private readonly ISecurityGroupService? _securityGroups;
+        private readonly string[] _demoYouTubeLinks;
+
+        // Marker file used to track when demo was last generated
+        private readonly string demoMarkerFileName = "_demo_last_reset.txt";
 
         /// <summary>
         /// Initializes a new instance of <see cref="TenantManagerService"/>.
@@ -36,6 +41,7 @@ namespace Theatre_TimeLine.Services
         public TenantManagerService(IConfiguration configuration, ISecurityGroupService? securityGroups = null)
         {
             this._securityGroups = securityGroups;
+            this._demoYouTubeLinks = LoadDemoYouTubeLinks(configuration);
 
             // Read demo tenant ID from configuration or use default
             this.DemoTenantId = configuration.GetValue<string>(demoTenantIdConfigKey) ?? DefaultDemoGuid;
@@ -58,17 +64,22 @@ namespace Theatre_TimeLine.Services
             {
                 dataPath = Path.Combine(
                     AppDomain.CurrentDomain.BaseDirectory,
-                    dataPath.Trim(['.', '\\', '/']));
+                    dataPath.Trim(new[] { '.', '\\', '/' }));
             }
 
             this.dataPath = dataPath;
+
+            // Ensure base data path exists
             if (!Directory.Exists(this.dataPath))
             {
                 Directory.CreateDirectory(this.dataPath);
-
-                // Create a demo page.
-                CreateDemoPage();
             }
+
+            // Ensure demo tenant exists and is fresh
+            EnsureDemoDataFresh();
+
+            // Ensure existing demo video addresses have valid YouTube URLs from configuration
+            EnsureDemoVideoLinksApplied();
         }
 
         /// <inheritdoc />
@@ -223,11 +234,145 @@ namespace Theatre_TimeLine.Services
         }
 
         /// <summary>
-        /// Creates the demo page and tenant for first-time setup.
+        /// Ensure demo data exists and is fresh (resets nightly).
         /// </summary>
+        private void EnsureDemoDataFresh()
+        {
+            try
+            {
+                var markerPath = Path.Combine(this.dataPath, demoMarkerFileName);
+                var todayUtc = DateTime.UtcNow.Date;
+
+                // If demo tenant folder doesn't exist, create demo now
+                var demoRoot = Path.Combine(this.dataPath, DemoTenantId);
+                if (!Directory.Exists(demoRoot))
+                {
+                    CreateDemoPage();
+                    File.WriteAllText(markerPath, todayUtc.ToString("yyyy-MM-dd"));
+                    return;
+                }
+
+                // If marker file missing or older than today, reset demo
+                if (!File.Exists(markerPath))
+                {
+                    // reset
+                    if (Directory.Exists(demoRoot))
+                        Directory.Delete(demoRoot, recursive: true);
+
+                    CreateDemoPage();
+                    File.WriteAllText(markerPath, todayUtc.ToString("yyyy-MM-dd"));
+                    return;
+                }
+
+                var markerText = File.ReadAllText(markerPath).Trim();
+                if (!DateTime.TryParseExact(markerText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var lastResetDate))
+                {
+                    // Invalid marker - reset
+                    if (Directory.Exists(demoRoot))
+                        Directory.Delete(demoRoot, recursive: true);
+
+                    CreateDemoPage();
+                    File.WriteAllText(markerPath, todayUtc.ToString("yyyy-MM-dd"));
+                    return;
+                }
+
+                if (lastResetDate.Date < todayUtc)
+                {
+                    // Older than today - reset demo
+                    if (Directory.Exists(demoRoot))
+                        Directory.Delete(demoRoot, recursive: true);
+
+                    CreateDemoPage();
+                    File.WriteAllText(markerPath, todayUtc.ToString("yyyy-MM-dd"));
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Failed to ensure demo data freshness: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Updates existing demo video addresses so they use configured YouTube links when invalid content is present.
+        /// This avoids waiting for the next scheduled demo reset.
+        /// </summary>
+        private void EnsureDemoVideoLinksApplied()
+        {
+            try
+            {
+                if (!Guid.TryParse(DemoTenantId, out var demoTenantGuid))
+                {
+                    return;
+                }
+
+                var tenant = GetTenant(demoTenantGuid);
+                if (tenant == null || tenant.Roads == null || tenant.Roads.Length == 0)
+                {
+                    return;
+                }
+
+                foreach (var road in tenant.Roads)
+                {
+                    if (road?.Addresses == null || road.Addresses.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    bool roadChanged = false;
+                    int videoLinkIndex = 0;
+
+                    foreach (var address in road.Addresses.Where(a => a.AddressType == AddressType.Video))
+                    {
+                        bool hasValidYouTubeId = !string.IsNullOrWhiteSpace(YouTubeUrlParser.ExtractVideoId(address.Content));
+                        if (!hasValidYouTubeId)
+                        {
+                            address.Content = _demoYouTubeLinks[videoLinkIndex % _demoYouTubeLinks.Length];
+                            roadChanged = true;
+                        }
+
+                        videoLinkIndex++;
+                    }
+
+                    if (roadChanged)
+                    {
+                        SaveRoad(road);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Failed to apply demo video links: {ex.Message}");
+            }
+        }
+
+        private static string[] LoadDemoYouTubeLinks(IConfiguration configuration)
+        {
+            var links = configuration
+                .GetSection("TenantManager:DemoVideoLinks")
+                .GetChildren()
+                .Select(x => x.GetSection("VideoLink:Location").Value)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!.Trim())
+                .ToArray();
+
+            if (links.Length > 0)
+            {
+                return links;
+            }
+
+            return
+            [
+                "https://www.youtube.com/watch?v=c51ND9Hdbw0",
+                "https://www.youtube.com/embed/hJnAHzo4-KI"
+            ];
+        }
+
+        /// <summary>
+         /// Creates the demo page and tenant for first-time setup.
+         /// </summary>
         private void CreateDemoPage()
         {
-            // Setup the Demo.
+            // Setup the Demo tenant container.
             ITenantContainer tenant = new TenantContainer
             {
                 TenantName = "Demo",
@@ -237,19 +382,94 @@ namespace Theatre_TimeLine.Services
                 TenantPath = Path.Combine(this.dataPath, DemoTenantId)
             };
 
+            // Persist tenant configuration
             this.CreateTenant(tenant);
 
-            IRoadToThere roadToThere = new RoadToThere
+            // Build a demo road with multiple addresses
+            var now = DateTime.Now;
+            var road = new RoadToThere
             {
                 RoadId = Guid.Parse(DemoTenantId),
-                Description = "Road from start to finish",
+                Description = "Road showcasing features from start to finish",
                 TenantId = tenant.TenantId,
-                EndTime = DateTime.Now.AddDays(365),
+                StartTime = now.AddDays(-2), // demo starts T-2 days
+                EndTime = now.AddDays(-2).AddDays(10), // run for 10 days total
                 Title = "Full Demo of capabilities",
                 RoadAdmin = tenant.AdminSecurityGroup,
             };
 
-            this.SaveRoad(roadToThere);
+            // Generate ~10 addresses across the road range
+            var addresses = new List<Address>();
+            int count = 10;
+            var span = (road.EndTime!.Value - road.StartTime!.Value).TotalMinutes;
+            for (int i = 0; i < count; i++)
+            {
+                var offset = TimeSpan.FromMinutes((span * i) / Math.Max(1, count - 1));
+                var loc = road.StartTime.Value.Add(offset);
+
+                // Alternate types: Notification, Survey, Video
+                var mod = i % 3;
+                if (mod == 1)
+                {
+                    // Poll
+                    var poll = new Poll
+                    {
+                        PollId = Guid.NewGuid(),
+                        Question = i == 1 ? "Will you attend the event?" : $"Question {i}",
+                        PollType = (i % 2 == 0) ? PollType.MultipleChoice : PollType.YesNo,
+                        Options = (i % 2 == 0) ? new List<string> { "Option A", "Option B", "Option C" } : new List<string> { "Yes", "No" }
+                    };
+
+                    var pollAddr = new PollAddress
+                    {
+                        Title = i == 1 ? "Survey: Attendance" : $"Survey {i}",
+                        Description = "Please participate in this quick poll.",
+                        Location = loc,
+                        DelayRelease = false
+                    };
+
+                    // Use extension to set poll JSON content
+                    pollAddr.SetPoll(poll);
+                    addresses.Add(pollAddr);
+                }
+                else
+                {
+                    if (mod == 0)
+                    {
+                        var addr = new Address
+                        {
+                            Title = i == 0 ? "Welcome to the Demo" : $"Update {i}",
+                            Description = "Demo content showing timeline events.",
+                            Content = i % 2 == 0 ? "Short announcement content." : "Additional details about this event.",
+                            Location = loc,
+                            DelayRelease = false,
+                            AddressType = AddressType.Notification
+                        };
+
+                        addresses.Add(addr);
+                    }
+                    else
+                    {
+                        var videoLink = _demoYouTubeLinks[(i / 3) % _demoYouTubeLinks.Length];
+                        var addr = new Address
+                        {
+                            Title = $"Update {i}",
+                            Description = "Video update for the timeline.",
+                            Content = videoLink,
+                            Location = loc,
+                            DelayRelease = false,
+                            AddressType = AddressType.Video
+                        };
+
+                        addresses.Add(addr);
+                    }
+                }
+            }
+
+            road.Addresses = addresses.ToArray();
+
+            // Save the road
+            this.SaveRoad(road);
         }
 
         /// <inheritdoc />

@@ -223,6 +223,13 @@ builder.Services.AddScoped<IClipboardService, ClipboardService>();
 // Add controllers
 builder.Services.AddControllers();
 
+// Add memory cache
+builder.Services.AddMemoryCache();
+
+// Register YouTube validation service
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<IYouTubeValidationService, YouTubeValidationService>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
