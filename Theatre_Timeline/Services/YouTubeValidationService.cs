@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -51,6 +53,12 @@ namespace Theatre_TimeLine.Services
                 return cached;
             }
 
+            var safeVideoId = SanitizeForLog(videoId, out var htmlEncodedChanged);
+            if (htmlEncodedChanged)
+            {
+                _logger.LogWarning("Potentially unsafe characters detected in video id input; HTML encoding changed the logged value. VideoId={VideoId}", safeVideoId);
+            }
+
             try
             {
                 var client = _httpClientFactory.CreateClient();
@@ -62,7 +70,7 @@ namespace Theatre_TimeLine.Services
                 using var resp = await client.GetAsync(requestUri);
                 if (!resp.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("YouTube API returned {Status} for video {VideoId}", resp.StatusCode, videoId);
+                    _logger.LogWarning("YouTube API returned {Status} for video {VideoId}", resp.StatusCode, safeVideoId);
                     var result = (false, $"YouTube API request failed: {resp.StatusCode}");
                     _cache.Set(cacheKey, result, TimeSpan.FromMinutes(5));
                     return result;
@@ -115,11 +123,50 @@ namespace Theatre_TimeLine.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error validating YouTube video {VideoId}", videoId);
+                _logger.LogError(ex, "Error validating YouTube video {VideoId}", safeVideoId);
                 var result = (false, "Error validating YouTube video");
                 _cache.Set(cacheKey, result, TimeSpan.FromMinutes(5));
                 return result;
             }
+        }
+
+        private static string SanitizeForLog(string? value, out bool htmlEncodedChanged)
+        {
+            htmlEncodedChanged = false;
+
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            var sb = new StringBuilder(Math.Min(value.Length, 256));
+            foreach (var ch in value)
+            {
+                // Remove non-printable ASCII control chars (U+0000..U+001F) plus DEL (U+007F).
+                // This strips CR/LF/tab and similar characters that can break log line structure.
+                if (ch < 0x20 || ch == 0x7F)
+                {
+                    continue;
+                }
+
+                sb.Append(ch);
+
+                // Cap logged output length to keep logs bounded and readable.
+                if (sb.Length >= 256)
+                {
+                    break;
+                }
+            }
+
+            var sanitized = sb.ToString();
+            if (sanitized.Length < value.Length)
+            {
+                sanitized += "...";
+            }
+
+            var encoded = WebUtility.HtmlEncode(sanitized);
+            htmlEncodedChanged = !string.Equals(encoded, sanitized, StringComparison.Ordinal);
+            return encoded;
         }
     }
 }
