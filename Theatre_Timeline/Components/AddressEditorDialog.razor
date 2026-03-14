@@ -329,19 +329,48 @@
 
     private void OnAddressTypeChanged(object? sender, AddressType addressType)
     {
+        var current = Address;
+
         if (addressType == AddressType.Survey)
         {
-            if (Address is not PollAddress)
+            if (current is not PollAddress)
             {
-                Address = new PollAddress();
+                Address = new PollAddress
+                {
+                    Location = current.Location,
+                    Title = current.Title,
+                    Description = current.Description,
+                    Content = current.Content,
+                    Tags = current.Tags,
+                    DelayRelease = current.DelayRelease,
+                    AddressType = addressType
+                };
+            }
+            else
+            {
+                Address.AddressType = addressType;
             }
 
+            StateHasChanged();
             return;
         }
 
-        if (Address is PollAddress)
+        if (current is PollAddress)
         {
-            Address = new Address();
+            Address = new Address
+            {
+                Location = current.Location,
+                Title = current.Title,
+                Description = current.Description,
+                Content = current.Content,
+                Tags = current.Tags,
+                DelayRelease = current.DelayRelease,
+                AddressType = addressType
+            };
+        }
+        else
+        {
+            Address.AddressType = addressType;
         }
 
         StateHasChanged();
