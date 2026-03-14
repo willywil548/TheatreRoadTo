@@ -199,6 +199,7 @@ builder.Services.AddSingleton<IEmailEncryptionService, EmailEncryptionService>()
 
 // Add SendGrid webhook validator
 builder.Services.AddSingleton<ISendGridWebhookValidator, SendGridWebhookValidator>();
+builder.Services.AddSingleton<ISendGridEmailService, SendGridEmailService>();
 
 // Add user management service (Graph if configured; stub otherwise)
 builder.Services.AddUserManagementServices(builder.Configuration);
