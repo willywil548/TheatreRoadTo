@@ -125,6 +125,11 @@ namespace Theatre_TimeLine.Services
         Matched,
 
         /// <summary>
+        /// A known tenant and road pair was matched.
+        /// </summary>
+        MatchedTenantRoad,
+
+        /// <summary>
         /// The recipient block could not be read as a routable address.
         /// </summary>
         Unreadable,
@@ -184,6 +189,7 @@ namespace Theatre_TimeLine.Services
         {
             _logger.LogInformation("Received inbound email request from SendGrid");
 
+            // First gate: validate webhook source before doing any processing work.
             var validationResult = await _webhookValidator.ValidateRequestAsync(context);
             if (!validationResult.IsValid)
             {
@@ -200,9 +206,11 @@ namespace Theatre_TimeLine.Services
             _logger.LogInformation("Webhook validation passed. Headers captured: {HasHeaders}",
                 validationResult.Headers != null);
 
+            // Second gate: resolve tenant (or tenant.road) from recipient local-part.
             var tenantResolution = ResolveTenantIdFromRecipients(email);
             if (tenantResolution.Status == TenantRoutingStatus.Unreadable)
             {
+                // Acknowledge but do not save when routing data cannot be interpreted.
                 _logger.LogWarning("Inbound email acknowledged but not saved: unreadable recipient block. To: {To}",
                     SanitizeForLog(email.To));
 
@@ -216,8 +224,11 @@ namespace Theatre_TimeLine.Services
                     Saved: false);
             }
 
-            if (tenantResolution.Status == TenantRoutingStatus.NoKnownTenant || !tenantResolution.TenantId.HasValue)
+            if ((tenantResolution.Status != TenantRoutingStatus.Matched &&
+                 tenantResolution.Status != TenantRoutingStatus.MatchedTenantRoad) ||
+                 !tenantResolution.TenantId.HasValue)
             {
+                // Acknowledge but do not save when no known tenant can be mapped.
                 _logger.LogWarning("Inbound email acknowledged but not saved: no matching tenant ID found in recipient fields. To: {To}",
                     SanitizeForLog(email.To));
 
@@ -233,6 +244,7 @@ namespace Theatre_TimeLine.Services
 
             var tenantId = tenantResolution.TenantId.Value;
 
+            // Explicitly exclude demo tenant from persistence workflows.
             if (_demoTenantId.HasValue && tenantId == _demoTenantId.Value)
             {
                 _logger.LogInformation("Inbound email acknowledged but not saved: demo tenant is excluded. TenantId: {TenantId}", tenantId);
@@ -247,11 +259,13 @@ namespace Theatre_TimeLine.Services
                     Saved: false);
             }
 
+            // Enrich inbound payload with system-managed metadata.
             email.ReceivedAt = DateTime.UtcNow.ToString("O");
             email.Encrypted = true;
             email.ValidatedSource = validationResult.IsValid;
             email.WebhookHeaders = validationResult.Headers;
 
+            // Capture attachment metadata for audit/inspection; file bytes are not persisted here.
             var form = await context.Request.ReadFormAsync();
             if (form.Files.Count > 0)
             {
@@ -263,6 +277,7 @@ namespace Theatre_TimeLine.Services
                 }).ToList();
             }
 
+            // Log with masking/sanitization to reduce PII and log-injection risk.
             _logger.LogInformation("Parsed email - From: {From}, To: {To}, Subject: {Subject}",
                 MaskEmail(email.GetFromEmail()),
                 MaskEmail(email.GetToEmail()),
@@ -272,22 +287,26 @@ namespace Theatre_TimeLine.Services
 
             if (email.IsLikelySpam())
             {
+                // Current behavior keeps spam for analysis; downstream readers can filter.
                 _logger.LogWarning("Email flagged as spam (score: {SpamScore}), saving but marking as spam",
                     email.GetSpamScoreValue());
             }
 
+            // Tenant-scoped storage keeps lifecycle aligned to tenant deletion.
             string tenantEmailStoragePath = GetTenantEmailStoragePath(tenantId);
             if (!Directory.Exists(tenantEmailStoragePath))
             {
                 Directory.CreateDirectory(tenantEmailStoragePath);
             }
 
+            // Compose storage filename with timestamp + sender hint + random suffix.
             string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
             string fromEmail = email.GetFromEmail()?.Replace("@", "_at_") ?? "unknown";
             string sanitizedFrom = string.Join("_", fromEmail.Split(Path.GetInvalidFileNameChars()));
             string filename = $"email_{timestamp}_{sanitizedFrom}_{Guid.NewGuid()}.enc";
             string filePath = Path.Combine(tenantEmailStoragePath, filename);
 
+            // Persist tenant-qualified relative file identity for retrieval endpoints.
             email.StoredAs = $"{tenantId:D}/{filename}";
 
             var options = new JsonSerializerOptions
@@ -296,8 +315,15 @@ namespace Theatre_TimeLine.Services
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
 
+            // Encrypt and save payload to disk.
             string jsonContent = JsonSerializer.Serialize(email, options);
             await _encryptionService.WriteEncryptedFileAsync(filePath, jsonContent);
+
+            // If routed as tenant.road, also materialize an address on that road.
+            if (tenantResolution.Status == TenantRoutingStatus.MatchedTenantRoad && tenantResolution.RoadId.HasValue)
+            {
+                CreateRoadAddressFromEmail(tenantId, tenantResolution.RoadId.Value, email);
+            }
 
             _logger.LogInformation("Encrypted email saved successfully for tenant {TenantId}", tenantId);
 
@@ -383,6 +409,7 @@ namespace Theatre_TimeLine.Services
         /// <returns>The resolution status and resolved full path when successful.</returns>
         private (StoredEmailLookupStatus Status, string? Path) ResolveStoredEmailPath(string filename)
         {
+            // Normalize separators to support URL and file-style inputs consistently.
             var normalized = filename.Replace('\\', '/').Trim();
             if (string.IsNullOrWhiteSpace(normalized))
             {
@@ -391,6 +418,7 @@ namespace Theatre_TimeLine.Services
 
             var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+            // Preferred format is {tenantId}/{emailFile}.
             if (parts.Length == 2)
             {
                 if (!Guid.TryParse(parts[0], out var tenantId))
@@ -408,6 +436,7 @@ namespace Theatre_TimeLine.Services
                 var fullPath = Path.GetFullPath(tenantFilePath);
                 var allowedPath = Path.GetFullPath(tenantRoot);
 
+                // Defense-in-depth path validation against traversal.
                 if (!fullPath.StartsWith(allowedPath, StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogWarning("Path traversal attempt detected");
@@ -422,6 +451,7 @@ namespace Theatre_TimeLine.Services
                 return (StoredEmailLookupStatus.Success, fullPath);
             }
 
+            // Backward-compatible lookup by bare filename across tenant folders.
             string safeFilename = Path.GetFileName(normalized);
             if (!IsValidEmailFilename(safeFilename))
             {
@@ -445,7 +475,7 @@ namespace Theatre_TimeLine.Services
         /// </summary>
         /// <param name="email">The inbound email payload.</param>
         /// <returns>The routing status and resolved tenant ID when matched.</returns>
-        private (TenantRoutingStatus Status, Guid? TenantId) ResolveTenantIdFromRecipients(SendGridInboundEmail email)
+        private (TenantRoutingStatus Status, Guid? TenantId, Guid? RoadId) ResolveTenantIdFromRecipients(SendGridInboundEmail email)
         {
             bool foundRecipientToken = false;
             bool foundReadableAddress = false;
@@ -458,19 +488,75 @@ namespace Theatre_TimeLine.Services
                 {
                     foundReadableAddress = true;
 
+                    // tenant.road format (dot delimiter) routes directly to a road.
+                    var routeParts = localPart.Split('.', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                    if (routeParts.Length == 2 &&
+                        Guid.TryParse(routeParts[0], out var tenantIdFromPair) &&
+                        Guid.TryParse(routeParts[1], out var roadIdFromPair))
+                    {
+                        var tenant = _tenantManagerService.GetTenant(tenantIdFromPair);
+                        bool roadBelongsToTenant = tenant?.Roads.Any(road => road.RoadId == roadIdFromPair) ?? false;
+                        if (roadBelongsToTenant)
+                        {
+                            return (TenantRoutingStatus.MatchedTenantRoad, tenantIdFromPair, roadIdFromPair);
+                        }
+                    }
+
+                    // tenant-only format routes to tenant-level processing.
                     if (Guid.TryParse(localPart, out var tenantId) && _tenantManagerService.GetTenant(tenantId) != null)
                     {
-                        return (TenantRoutingStatus.Matched, tenantId);
+                        return (TenantRoutingStatus.Matched, tenantId, null);
                     }
                 }
             }
 
             if (!foundRecipientToken || !foundReadableAddress)
             {
-                return (TenantRoutingStatus.Unreadable, null);
+                return (TenantRoutingStatus.Unreadable, null, null);
             }
 
-            return (TenantRoutingStatus.NoKnownTenant, null);
+            return (TenantRoutingStatus.NoKnownTenant, null, null);
+        }
+
+        /// <summary>
+        /// Creates a notification address on a road using inbound email content.
+        /// </summary>
+        /// <param name="tenantId">The tenant ID.</param>
+        /// <param name="roadId">The road ID.</param>
+        /// <param name="email">The inbound email payload.</param>
+        private void CreateRoadAddressFromEmail(Guid tenantId, Guid roadId, SendGridInboundEmail email)
+        {
+            try
+            {
+                var road = _tenantManagerService.GetRoad(roadId);
+                if (road.TenantId != tenantId)
+                {
+                    _logger.LogWarning("Inbound email route mismatch: road {RoadId} does not belong to tenant {TenantId}", roadId, tenantId);
+                    return;
+                }
+
+                // Create a simple notification address from email metadata/body.
+                var address = new Address
+                {
+                    Location = DateTime.UtcNow,
+                    Title = string.IsNullOrWhiteSpace(email.Subject) ? "Inbound Email" : email.Subject,
+                    Description = $"Inbound email from {email.GetFromDisplayName() ?? email.GetFromEmail() ?? "unknown sender"}",
+                    Content = email.GetBodyContent() ?? email.GetTextBody() ?? email.GetHtmlBody() ?? string.Empty,
+                    AddressType = AddressType.Notification,
+                    DelayRelease = false
+                };
+
+                // Append and persist by re-saving the road.
+                var existingAddresses = road.Addresses ?? Array.Empty<Address>();
+                road.Addresses = [.. existingAddresses, address];
+                _tenantManagerService.SaveRoad(road);
+
+                _logger.LogInformation("Created inbound email address for tenant {TenantId}, road {RoadId}", tenantId, roadId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create road address from inbound email for tenant {TenantId}, road {RoadId}", tenantId, roadId);
+            }
         }
 
         /// <summary>
@@ -502,14 +588,17 @@ namespace Theatre_TimeLine.Services
         /// <returns>Extracted local-part values.</returns>
         private static IEnumerable<string> EnumerateLocalParts(string input)
         {
+            // Multiple recipients may be comma/semicolon separated.
             foreach (var token in input.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
+                // Remove common wrapper characters from mailbox token.
                 var cleanToken = token.Trim().Trim('"', '\'', '<', '>');
                 if (string.IsNullOrWhiteSpace(cleanToken))
                 {
                     continue;
                 }
 
+                // Local-part is everything before '@'.
                 int atIndex = cleanToken.IndexOf('@');
                 if (atIndex <= 0)
                 {
@@ -536,6 +625,7 @@ namespace Theatre_TimeLine.Services
 
         private static bool IsValidEmailFilename(string filename)
         {
+            // Enforce expected storage artifact naming to reduce ambiguous lookups.
             return !string.IsNullOrEmpty(filename) &&
                    filename.StartsWith("email_", StringComparison.Ordinal) &&
                    filename.EndsWith(".enc", StringComparison.Ordinal);
@@ -548,10 +638,12 @@ namespace Theatre_TimeLine.Services
                 return string.Empty;
             }
 
+            // Remove control characters that could forge/poison logs.
             var sanitized = LogSanitizationRegex().Replace(input, " ");
             const int maxLogLength = 200;
             if (sanitized.Length > maxLogLength)
             {
+                // Bound log payload size for safety and readability.
                 sanitized = string.Concat(sanitized.AsSpan(0, maxLogLength), "...");
             }
 
@@ -574,6 +666,7 @@ namespace Theatre_TimeLine.Services
             var localPart = email[..atIndex];
             var domainPart = email[(atIndex + 1)..];
 
+            // Keep minimal signal for diagnostics while masking PII.
             var maskedLocal = localPart.Length > 0
                 ? $"{localPart[0]}***"
                 : "***";
