@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Models;
 using Theatre_TimeLine.Services;
 
@@ -14,16 +13,13 @@ namespace Theatre_TimeLine.Controllers
     public class SendGridController : ControllerBase
     {
         private readonly ILogger<SendGridController> _logger;
-        private readonly ISecurityGroupService _securityGroupService;
         private readonly ISendGridEmailService _sendGridEmailService;
 
         public SendGridController(
             ILogger<SendGridController> logger,
-            ISecurityGroupService securityGroupService,
             ISendGridEmailService sendGridEmailService)
         {
             _logger = logger;
-            _securityGroupService = securityGroupService;
             _sendGridEmailService = sendGridEmailService;
         }
 
@@ -84,22 +80,23 @@ namespace Theatre_TimeLine.Controllers
         /// <summary>
         /// Retrieves and decrypts a stored email by filename.
         /// Endpoint: GET /api/sendgrid/email/{filename}
-        /// Requires Global Admin (Roads-Admin) membership.
+        /// Requires Global Admin or Tenant Manager (for own tenant files).
         /// </summary>
         /// <param name="filename">The encrypted email filename.</param>
         [HttpGet("email/{filename}")]
         [Authorize]
         public async Task<IActionResult> GetEmail(string filename)
         {
-            if (!await IsGlobalAdminAsync())
-            {
-                _logger.LogWarning("Unauthorized access attempt to email by user");
-                return Forbid();
-            }
-
             try
             {
-                var result = await _sendGridEmailService.GetStoredEmailAsync(filename);
+                var getResult = await _sendGridEmailService.TryGetStoredEmailForAccessAsync(User, filename);
+                if (!getResult.Allowed)
+                {
+                    _logger.LogWarning("Unauthorized access attempt to email by user");
+                    return Forbid();
+                }
+
+                var result = getResult.EmailResult;
 
                 return result.Status switch
                 {
@@ -132,24 +129,25 @@ namespace Theatre_TimeLine.Controllers
         }
 
         /// <summary>
-        /// Lists all stored encrypted emails.
-        /// Endpoint: GET /api/sendgrid/emails
-        /// Requires Global Admin (Roads-Admin) membership.
+        /// Lists stored encrypted emails.
+        /// Endpoint: GET /api/sendgrid/emails?tenantId={tenantId}
+        /// Requires Global Admin or Tenant Manager (own tenant files only).
         /// </summary>
+        /// <param name="tenantId">Optional tenant filter. If omitted, returns all emails the caller can access.</param>
         [HttpGet("emails")]
         [Authorize]
-        public async Task<IActionResult> ListEmails()
+        public async Task<IActionResult> ListEmails([FromQuery] Guid? tenantId = null)
         {
-            if (!await IsGlobalAdminAsync())
-            {
-                _logger.LogWarning("Unauthorized access attempt to email list");
-                return Forbid();
-            }
-
             try
             {
-                var files = await _sendGridEmailService.ListStoredEmailsAsync();
-                return Ok(new { count = files.Count, emails = files });
+                var listResult = await _sendGridEmailService.TryListStoredEmailsForAccessAsync(User, tenantId);
+                if (!listResult.Allowed)
+                {
+                    _logger.LogWarning("Unauthorized access attempt to email list");
+                    return Forbid();
+                }
+
+                return Ok(new { count = listResult.Emails.Count, emails = listResult.Emails });
             }
             catch (Exception ex)
             {
@@ -168,28 +166,5 @@ namespace Theatre_TimeLine.Controllers
         {
             return Ok(_sendGridEmailService.GetHealthStatus());
         }
-
-#pragma warning disable CA1822 // Mark members as static - method accesses instance members via User property
-        /// <summary>
-        /// Checks if the current user is a member of the Global Admin (Roads-Admin) group.
-        /// </summary>
-        private async Task<bool> IsGlobalAdminAsync()
-        {
-            if (!User.Identity?.IsAuthenticated ?? false)
-            {
-                return false;
-            }
-
-            string? userEmail = User.GetEmail();
-            if (string.IsNullOrEmpty(userEmail))
-            {
-                return false;
-            }
-
-            return await _securityGroupService.IsUserInGroupAsync(
-                userEmail,
-                SecurityGroupNameBuilder.GlobalAdminsGroup);
-        }
-#pragma warning restore CA1822
     }
 }

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -6,6 +7,28 @@ using Theatre_TimeLine.Models;
 
 namespace Theatre_TimeLine.Services
 {
+    /// <summary>
+    /// Represents the result of attempting to get a stored email for a caller.
+    /// </summary>
+    /// <param name="Allowed">Whether the caller is authorized to read the requested email.</param>
+    /// <param name="EmailResult">The lookup result for the requested email.</param>
+    public sealed record EmailGetAccessResult(bool Allowed, StoredEmailLookupResult EmailResult);
+
+    /// <summary>
+    /// Represents the result of attempting to list stored emails for a caller.
+    /// </summary>
+    /// <param name="Allowed">Whether the caller is authorized to list emails.</param>
+    /// <param name="Emails">The visible emails for the caller and optional filter.</param>
+    public sealed record EmailListAccessResult(bool Allowed, IReadOnlyList<StoredEmailSummary> Emails);
+
+    /// <summary>
+    /// Represents caller visibility for SendGrid email operations.
+    /// </summary>
+    /// <param name="Allowed">Whether the caller has any email access.</param>
+    /// <param name="HasGlobalAccess">Whether the caller can access all tenants.</param>
+    /// <param name="AllowedTenantIds">Tenant IDs visible to the caller.</param>
+    public sealed record EmailAccessScope(bool Allowed, bool HasGlobalAccess, HashSet<Guid> AllowedTenantIds);
+
     /// <summary>
     /// Provides tenant-aware SendGrid inbound email processing and retrieval operations.
     /// </summary>
@@ -27,16 +50,59 @@ namespace Theatre_TimeLine.Services
         Task<StoredEmailLookupResult> GetStoredEmailAsync(string filename);
 
         /// <summary>
+        /// Attempts to retrieve a stored email visible to the provided caller.
+        /// </summary>
+        /// <param name="user">The caller claims principal.</param>
+        /// <param name="filename">The requested filename.</param>
+        /// <returns>An access result containing authorization state and email lookup result.</returns>
+        Task<EmailGetAccessResult> TryGetStoredEmailForAccessAsync(ClaimsPrincipal user, string filename);
+
+        /// <summary>
         /// Lists all stored tenant email artifacts.
         /// </summary>
         /// <returns>A collection of stored email summaries.</returns>
         Task<IReadOnlyList<StoredEmailSummary>> ListStoredEmailsAsync();
 
         /// <summary>
+        /// Lists stored email artifacts visible to a caller based on access scope.
+        /// </summary>
+        /// <param name="tenantIdFilter">Optional tenant filter. If provided, only that tenant is returned.</param>
+        /// <param name="hasGlobalAccess">True when caller can access all tenants.</param>
+        /// <param name="allowedTenantIds">Tenant IDs caller can access when not global.</param>
+        /// <returns>A collection of email summaries constrained to caller visibility.</returns>
+        Task<IReadOnlyList<StoredEmailSummary>> ListStoredEmailsForAccessAsync(
+            Guid? tenantIdFilter,
+            bool hasGlobalAccess,
+            IReadOnlyCollection<Guid> allowedTenantIds);
+
+        /// <summary>
+        /// Attempts to list stored emails visible to the provided caller.
+        /// </summary>
+        /// <param name="user">The caller claims principal.</param>
+        /// <param name="tenantIdFilter">Optional tenant filter. If provided, only that tenant is returned.</param>
+        /// <returns>An access result containing authorization state and visible emails when allowed.</returns>
+        Task<EmailListAccessResult> TryListStoredEmailsForAccessAsync(ClaimsPrincipal user, Guid? tenantIdFilter);
+
+        /// <summary>
         /// Gets the current health and configuration status for SendGrid email processing.
         /// </summary>
         /// <returns>A health status snapshot.</returns>
         SendGridHealthStatus GetHealthStatus();
+
+        /// <summary>
+        /// Resolves the caller's email access scope from identity and group memberships.
+        /// </summary>
+        /// <param name="user">The caller claims principal.</param>
+        /// <returns>The access scope for email list/read operations.</returns>
+        Task<EmailAccessScope> ResolveEmailAccessAsync(ClaimsPrincipal user);
+
+        /// <summary>
+        /// Determines whether a filename is accessible for the caller scope.
+        /// </summary>
+        /// <param name="filename">The requested filename.</param>
+        /// <param name="accessScope">The caller access scope.</param>
+        /// <returns><see langword="true"/> when the filename is in scope; otherwise <see langword="false"/>.</returns>
+        bool CanAccessFilename(string filename, EmailAccessScope accessScope);
     }
 
     /// <summary>
@@ -152,6 +218,7 @@ namespace Theatre_TimeLine.Services
         private readonly IConfiguration _configuration;
         private readonly IEmailEncryptionService _encryptionService;
         private readonly ISendGridWebhookValidator _webhookValidator;
+        private readonly ISecurityGroupService _securityGroupService;
         private readonly ITenantManagerService _tenantManagerService;
         private readonly Guid? _demoTenantId;
 
@@ -162,18 +229,21 @@ namespace Theatre_TimeLine.Services
         /// <param name="configuration">The application configuration.</param>
         /// <param name="encryptionService">The email encryption service.</param>
         /// <param name="webhookValidator">The webhook validator service.</param>
+        /// <param name="securityGroupService">The security group service.</param>
         /// <param name="tenantManagerService">The tenant manager service.</param>
         public SendGridEmailService(
             ILogger<SendGridEmailService> logger,
             IConfiguration configuration,
             IEmailEncryptionService encryptionService,
             ISendGridWebhookValidator webhookValidator,
+            ISecurityGroupService securityGroupService,
             ITenantManagerService tenantManagerService)
         {
             _logger = logger;
             _configuration = configuration;
             _encryptionService = encryptionService;
             _webhookValidator = webhookValidator;
+            _securityGroupService = securityGroupService;
             _tenantManagerService = tenantManagerService;
 
             var demoTenantId = _configuration.GetValue<string>("TenantManager:DemoTenantId")
@@ -319,10 +389,19 @@ namespace Theatre_TimeLine.Services
             string jsonContent = JsonSerializer.Serialize(email, options);
             await _encryptionService.WriteEncryptedFileAsync(filePath, jsonContent);
 
-            // If routed as tenant.road, also materialize an address on that road.
-            if (tenantResolution.Status == TenantRoutingStatus.MatchedTenantRoad && tenantResolution.RoadId.HasValue)
+            // Only create addresses when recipient domain contains a subdomain level.
+            if (tenantResolution.HasSubdomain)
             {
-                CreateRoadAddressFromEmail(tenantId, tenantResolution.RoadId.Value, email);
+                if (tenantResolution.Status == TenantRoutingStatus.MatchedTenantRoad && tenantResolution.RoadId.HasValue)
+                {
+                    // tenant.road -> create address on one road.
+                    CreateRoadAddressFromEmail(tenantId, tenantResolution.RoadId.Value, email);
+                }
+                else if (tenantResolution.Status == TenantRoutingStatus.Matched)
+                {
+                    // tenant only -> create address on all roads in tenant.
+                    CreateTenantRoadAddressesFromEmail(tenantId, email);
+                }
             }
 
             _logger.LogInformation("Encrypted email saved successfully for tenant {TenantId}", tenantId);
@@ -351,6 +430,19 @@ namespace Theatre_TimeLine.Services
 
             _logger.LogInformation("Retrieved and decrypted email successfully");
             return new StoredEmailLookupResult(StoredEmailLookupStatus.Success, email);
+        }
+
+        /// <inheritdoc />
+        public async Task<EmailGetAccessResult> TryGetStoredEmailForAccessAsync(ClaimsPrincipal user, string filename)
+        {
+            var access = await ResolveEmailAccessAsync(user);
+            if (!access.Allowed || !CanAccessFilename(filename, access))
+            {
+                return new EmailGetAccessResult(false, new StoredEmailLookupResult(StoredEmailLookupStatus.NotFound));
+            }
+
+            var emailResult = await GetStoredEmailAsync(filename);
+            return new EmailGetAccessResult(true, emailResult);
         }
 
         /// <inheritdoc />
@@ -388,6 +480,46 @@ namespace Theatre_TimeLine.Services
         }
 
         /// <inheritdoc />
+        public async Task<IReadOnlyList<StoredEmailSummary>> ListStoredEmailsForAccessAsync(
+            Guid? tenantIdFilter,
+            bool hasGlobalAccess,
+            IReadOnlyCollection<Guid> allowedTenantIds)
+        {
+            var allFiles = await ListStoredEmailsAsync();
+
+            IReadOnlyList<StoredEmailSummary> visibleFiles = allFiles
+                .Where(file =>
+                    TryExtractTenantIdFromFilename(file.Filename, out var fileTenantId) &&
+                    (hasGlobalAccess || allowedTenantIds.Contains(fileTenantId)) &&
+                    (!tenantIdFilter.HasValue || fileTenantId == tenantIdFilter.Value))
+                .ToList();
+
+            return visibleFiles;
+        }
+
+        /// <inheritdoc />
+        public async Task<EmailListAccessResult> TryListStoredEmailsForAccessAsync(ClaimsPrincipal user, Guid? tenantIdFilter)
+        {
+            var access = await ResolveEmailAccessAsync(user);
+            if (!access.Allowed)
+            {
+                return new EmailListAccessResult(false, []);
+            }
+
+            if (tenantIdFilter.HasValue && !access.HasGlobalAccess && !access.AllowedTenantIds.Contains(tenantIdFilter.Value))
+            {
+                return new EmailListAccessResult(false, []);
+            }
+
+            var visibleFiles = await ListStoredEmailsForAccessAsync(
+                tenantIdFilter,
+                access.HasGlobalAccess,
+                access.AllowedTenantIds);
+
+            return new EmailListAccessResult(true, visibleFiles);
+        }
+
+        /// <inheritdoc />
         public SendGridHealthStatus GetHealthStatus()
         {
             bool encryptionEnabled = _configuration.GetValue<bool>("SendGrid:EnableEncryption", true);
@@ -400,6 +532,49 @@ namespace Theatre_TimeLine.Services
                 Encryption: encryptionEnabled ? "enabled" : "disabled",
                 Validation: new SendGridHealthValidationStatus(requireIpValidation, requireAuthValidation),
                 Timestamp: DateTime.UtcNow);
+        }
+
+        /// <inheritdoc />
+        public async Task<EmailAccessScope> ResolveEmailAccessAsync(ClaimsPrincipal user)
+        {
+            if (!user.Identity?.IsAuthenticated ?? false)
+            {
+                return new EmailAccessScope(false, false, []);
+            }
+
+            string? userEmail = user.GetEmail();
+            if (string.IsNullOrEmpty(userEmail))
+            {
+                return new EmailAccessScope(false, false, []);
+            }
+
+            if (await _securityGroupService.IsUserInGroupAsync(userEmail, SecurityGroupNameBuilder.GlobalAdminsGroup))
+            {
+                return new EmailAccessScope(true, true, []);
+            }
+
+            var allowedTenantIds = new HashSet<Guid>();
+            foreach (var tenant in _tenantManagerService.GetTenants())
+            {
+                if (await _securityGroupService.IsUserInGroupAsync(userEmail, SecurityGroupNameBuilder.TenantManager(tenant.TenantId)))
+                {
+                    allowedTenantIds.Add(tenant.TenantId);
+                }
+            }
+
+            return new EmailAccessScope(allowedTenantIds.Count > 0, false, allowedTenantIds);
+        }
+
+        /// <inheritdoc />
+        public bool CanAccessFilename(string filename, EmailAccessScope accessScope)
+        {
+            if (accessScope.HasGlobalAccess)
+            {
+                return true;
+            }
+
+            return TryExtractTenantIdFromFilename(filename, out var fileTenantId) &&
+                   accessScope.AllowedTenantIds.Contains(fileTenantId);
         }
 
         /// <summary>
@@ -475,7 +650,7 @@ namespace Theatre_TimeLine.Services
         /// </summary>
         /// <param name="email">The inbound email payload.</param>
         /// <returns>The routing status and resolved tenant ID when matched.</returns>
-        private (TenantRoutingStatus Status, Guid? TenantId, Guid? RoadId) ResolveTenantIdFromRecipients(SendGridInboundEmail email)
+        private (TenantRoutingStatus Status, Guid? TenantId, Guid? RoadId, bool HasSubdomain) ResolveTenantIdFromRecipients(SendGridInboundEmail email)
         {
             bool foundRecipientToken = false;
             bool foundReadableAddress = false;
@@ -484,12 +659,12 @@ namespace Theatre_TimeLine.Services
             {
                 foundRecipientToken = true;
 
-                foreach (var localPart in EnumerateLocalParts(recipient))
+                foreach (var routingToken in EnumerateRoutingTokens(recipient))
                 {
                     foundReadableAddress = true;
 
                     // tenant.road format (dot delimiter) routes directly to a road.
-                    var routeParts = localPart.Split('.', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                    var routeParts = routingToken.LocalPart.Split('.', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                     if (routeParts.Length == 2 &&
                         Guid.TryParse(routeParts[0], out var tenantIdFromPair) &&
                         Guid.TryParse(routeParts[1], out var roadIdFromPair))
@@ -498,24 +673,44 @@ namespace Theatre_TimeLine.Services
                         bool roadBelongsToTenant = tenant?.Roads.Any(road => road.RoadId == roadIdFromPair) ?? false;
                         if (roadBelongsToTenant)
                         {
-                            return (TenantRoutingStatus.MatchedTenantRoad, tenantIdFromPair, roadIdFromPair);
+                            return (TenantRoutingStatus.MatchedTenantRoad, tenantIdFromPair, roadIdFromPair, routingToken.HasSubdomain);
                         }
                     }
 
                     // tenant-only format routes to tenant-level processing.
-                    if (Guid.TryParse(localPart, out var tenantId) && _tenantManagerService.GetTenant(tenantId) != null)
+                    if (Guid.TryParse(routingToken.LocalPart, out var tenantId) && _tenantManagerService.GetTenant(tenantId) != null)
                     {
-                        return (TenantRoutingStatus.Matched, tenantId, null);
+                        return (TenantRoutingStatus.Matched, tenantId, null, routingToken.HasSubdomain);
                     }
                 }
             }
 
             if (!foundRecipientToken || !foundReadableAddress)
             {
-                return (TenantRoutingStatus.Unreadable, null, null);
+                return (TenantRoutingStatus.Unreadable, null, null, false);
             }
 
-            return (TenantRoutingStatus.NoKnownTenant, null, null);
+            return (TenantRoutingStatus.NoKnownTenant, null, null, false);
+        }
+
+        /// <summary>
+        /// Creates notification addresses on all roads for a tenant from inbound email content.
+        /// </summary>
+        /// <param name="tenantId">The tenant ID.</param>
+        /// <param name="email">The inbound email payload.</param>
+        private void CreateTenantRoadAddressesFromEmail(Guid tenantId, SendGridInboundEmail email)
+        {
+            var tenant = _tenantManagerService.GetTenant(tenantId);
+            if (tenant == null)
+            {
+                _logger.LogWarning("Could not create tenant-wide addresses: tenant {TenantId} was not found", tenantId);
+                return;
+            }
+
+            foreach (var road in tenant.Roads)
+            {
+                CreateRoadAddressFromEmail(tenantId, road.RoadId, email);
+            }
         }
 
         /// <summary>
@@ -586,7 +781,7 @@ namespace Theatre_TimeLine.Services
         /// </summary>
         /// <param name="input">The recipient input string.</param>
         /// <returns>Extracted local-part values.</returns>
-        private static IEnumerable<string> EnumerateLocalParts(string input)
+        private static IEnumerable<(string LocalPart, bool HasSubdomain)> EnumerateRoutingTokens(string input)
         {
             // Multiple recipients may be comma/semicolon separated.
             foreach (var token in input.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -598,18 +793,24 @@ namespace Theatre_TimeLine.Services
                     continue;
                 }
 
-                // Local-part is everything before '@'.
+                // Split mailbox into local-part and domain.
                 int atIndex = cleanToken.IndexOf('@');
-                if (atIndex <= 0)
+                if (atIndex <= 0 || atIndex >= cleanToken.Length - 1)
                 {
                     continue;
                 }
 
                 var localPart = cleanToken[..atIndex].Trim('"', '\'', '<', '>');
-                if (!string.IsNullOrWhiteSpace(localPart))
+                var domainPart = cleanToken[(atIndex + 1)..].Trim('"', '\'', '<', '>');
+
+                if (string.IsNullOrWhiteSpace(localPart) || string.IsNullOrWhiteSpace(domainPart))
                 {
-                    yield return localPart;
+                    continue;
                 }
+
+                // Subdomain exists when domain has at least three labels (e.g. notifications.roadstothere.com).
+                bool hasSubdomain = domainPart.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length >= 3;
+                yield return (localPart, hasSubdomain);
             }
         }
 
@@ -621,6 +822,19 @@ namespace Theatre_TimeLine.Services
         private string GetTenantEmailStoragePath(Guid tenantId)
         {
             return Path.Combine(_tenantManagerService.GetTenantRootPath(tenantId), "emails");
+        }
+
+        private static bool TryExtractTenantIdFromFilename(string filename, out Guid tenantId)
+        {
+            tenantId = Guid.Empty;
+            if (string.IsNullOrWhiteSpace(filename))
+            {
+                return false;
+            }
+
+            var normalized = filename.Replace('\\', '/').Trim();
+            var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return parts.Length == 2 && Guid.TryParse(parts[0], out tenantId);
         }
 
         private static bool IsValidEmailFilename(string filename)
