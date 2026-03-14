@@ -8,38 +8,45 @@
 <div id="@Id">
     @if (ShouldRenderTimeSeparator())
     {
-        <MudTimelineItem Class="@Class">
+        <div class="d-flex justify-center my-2">
             <MudText>@GetRoadDatePart()</MudText>
-        </MudTimelineItem>
+        </div>
+    }
+
+    @{
+        var sideByAddress = BuildRenderSideLookup();
     }
 
     <CascadingValue Value="Road">
-        @foreach (var item in this.GetAddresses())
+        @foreach (var item in GetAddresses())
         {
-            <CascadingValue Value="item">
-                <CascadingValue Value="OnEditAddress">
-                    @switch (item.AddressType)
-                    {
-                        case AddressType.Video:
-                            <VideoMediaAddress />
-                            break;
-                        case AddressType.Survey:
-                            <PollingAddress />
-                            break;
-                        default:
-                            <NotificationAddress />
-                            break;
-                    }
+            bool renderContentOnRight = sideByAddress.TryGetValue(item, out var value) ? value : true;
+
+            <div @key="item">
+                <CascadingValue Value="item">
+                    <CascadingValue Value="renderContentOnRight" Name="RenderContentOnRight">
+                        <CascadingValue Value="OnEditAddress">
+                            @switch (item.AddressType)
+                            {
+                                case AddressType.Video:
+                                    <VideoMediaAddress />
+                                    break;
+                                case AddressType.Survey:
+                                    <PollingAddress />
+                                    break;
+                                default:
+                                    <NotificationAddress />
+                                    break;
+                            }
+                        </CascadingValue>
+                    </CascadingValue>
                 </CascadingValue>
-            </CascadingValue>
+            </div>
         }
     </CascadingValue>
 </div>
 
 @code {
-
-    private int measurement = 24;
-
     [Parameter]
     public IRoadToThere Road { get; set; } = new RoadToThere();
 
@@ -47,39 +54,34 @@
     public int BlockIndex { get; set; }
 
     [Parameter]
-    public string? Style { get; set; }
-
-    [Parameter]
-    public string? Class { get; set; }
-
-    [Parameter]
     public string? Id { get; set; }
 
     [Parameter]
     public EventCallback<IAddress> OnEditAddress { get; set; }
 
-    protected override Task OnParametersSetAsync()
+    private Dictionary<IAddress, bool> BuildRenderSideLookup()
     {
-        if (Road != null)
+        var sideByAddress = new Dictionary<IAddress, bool>();
+
+        if (Road?.Addresses == null || Road.Addresses.Length == 0)
         {
-            switch (Road.RoadScope)
-            {
-                case RoadScope.Week:
-                    measurement = 1;
-                    break;
-                case RoadScope.Month:
-                    measurement = 4;
-                    break;
-                case RoadScope.Year:
-                    measurement = 30;
-                    break;
-                default:
-                    measurement = 24;
-                    break;
-            }
+            return sideByAddress;
         }
 
-        return base.OnParametersSetAsync();
+        var orderedVisibleAddresses = Road.Addresses
+            .Where(x => x.Location != null)
+            .Where(x => !x.DelayRelease || (x.DelayRelease && x.Location < DateTime.Now))
+            .OrderBy(x => x.Location)
+            .ThenBy(x => x.Title)
+            .ThenBy(x => x.Description)
+            .ToArray();
+
+        for (int i = 0; i < orderedVisibleAddresses.Length; i++)
+        {
+            sideByAddress[orderedVisibleAddresses[i]] = i % 2 == 0;
+        }
+
+        return sideByAddress;
     }
 
     private string GetRoadDatePart()
@@ -114,11 +116,11 @@
             return DateTime.Now;
         }
 
-        DateTime startDate = Road?.StartTime.Value ?? DateTime.Now;
+        DateTime startDate = Road.StartTime.Value;
         DateTime resultingDateTime = startDate.AddHours(BlockIndex);
 
         // Convert block index to a point in time.
-        switch (Road?.RoadScope)
+        switch (Road.RoadScope)
         {
             case RoadScope.Week:
             case RoadScope.Month:
@@ -132,18 +134,12 @@
 
     private bool ShouldRenderTimeSeparator()
     {
-        return BlockIndex == 0
-        || BlockIndex == Road.Duration;
+        return BlockIndex == 0 || BlockIndex == Road.Duration;
     }
 
     private IEnumerable<IAddress> GetAddresses()
     {
-        if (Road is null)
-        {
-            return Enumerable.Empty<IAddress>();
-        }
-
-        if (!Road.StartTime.HasValue)
+        if (Road is null || !Road.StartTime.HasValue)
         {
             return Enumerable.Empty<IAddress>();
         }
@@ -157,12 +153,14 @@
             return Enumerable.Empty<IAddress>();
         }
 
-        var locations = Road.Addresses
+        DateTime blockEnd = Road.RoadScope == RoadScope.Day
+            ? blockRange.AddHours(1).AddSeconds(-1)
+            : blockRange.AddDays(1).AddSeconds(-1);
+
+        return Road.Addresses
             .Where(x => x.Location != null)
             .Where(x => !x.DelayRelease || (x.DelayRelease && x.Location < DateTime.Now))
-            .Where(x => x.Location <= blockRange.AddHours(24).AddSeconds(-1) && x.Location >= blockRange)
+            .Where(x => x.Location <= blockEnd && x.Location >= blockRange)
             .OrderBy(x => x.Location);
-
-        return locations;
     }
 }

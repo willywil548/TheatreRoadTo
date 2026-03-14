@@ -6,53 +6,106 @@
 
 @inherits AddressBase
 
-<MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
-    <ItemOpposite>
-        <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
-    </ItemOpposite>
-    <ItemContent>
-        <MudCard Outlined="true" Class="p-2">
-            <MudCardContent>
-                <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
-                <MudText Class="align-content-center">@Address?.Description</MudText>
-                @if (!ShowResults)
-                {
-                    <MudText Typo="Typo.h6" Class="mb-2">@Poll.Question</MudText>
-                    <MudRadioGroup T="string" Value="SelectedOption" ValueChanged="OnSelectionChanged">
-                        @foreach (string option in Poll.Options)
-                        {
-                            <MudRadio Value="@option" Color="Color.Secondary">@option</MudRadio>
-                        }
-                    </MudRadioGroup>
-                }
-                else
-                {
-                    <div class="mt-2">
-                        <MudText Typo="Typo.subtitle2">Results:</MudText>
-                        @if (Poll.Responses.Count > 0)
-                        {
-                            @foreach (var option in Poll.Options)
+@if (RenderContentOnRight)
+{
+    <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
+        <ItemOpposite>
+            <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
+        </ItemOpposite>
+        <ItemContent>
+            <MudCard Outlined="true" Class="p-2">
+                <MudCardContent>
+                    <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
+                    <MudText Class="align-content-center">@Address?.Description</MudText>
+                    @if (!ShowResults)
+                    {
+                        <MudText Typo="Typo.h6" Class="mb-2">@Poll.Question</MudText>
+                        <MudRadioGroup T="string" Value="SelectedOption" ValueChanged="OnSelectionChanged">
+                            @foreach (string option in Poll.Options)
                             {
-                                <MudProgressLinear Color="Color.Primary" Value="@GetPercent(option)" Max="100" Style="height:10px" />
-                                <MudText>@option: @GetCount(option)</MudText>
+                                <MudRadio Value="@option" Color="Color.Secondary">@option</MudRadio>
                             }
-                        }
-                        else
-                        {
-                            <MudText>No responses yet.</MudText>
-                        }
-                    </div>
-                }
-            </MudCardContent>
+                        </MudRadioGroup>
+                    }
+                    else
+                    {
+                        <div class="mt-2">
+                            <MudText Typo="Typo.subtitle2">Results:</MudText>
+                            @if (Poll.Responses.Count > 0)
+                            {
+                                @foreach (var option in Poll.Options)
+                                {
+                                    <MudProgressLinear Color="Color.Primary" Value="@GetPercent(option)" Max="100" Style="height:10px" />
+                                    <MudText>@option: @GetCount(option)</MudText>
+                                }
+                            }
+                            else
+                            {
+                                <MudText>No responses yet.</MudText>
+                            }
+                        </div>
+                    }
+                </MudCardContent>
 
-            <CascadingValue Value="Address" IsFixed="true">
-                <CascadingValue Value="OnEditAddress" IsFixed="true">
-                    <AddressEditMenuItem />
+                <CascadingValue Value="Address" IsFixed="true">
+                    <CascadingValue Value="OnEditAddress" IsFixed="true">
+                        <AddressEditMenuItem />
+                    </CascadingValue>
                 </CascadingValue>
-            </CascadingValue>
-        </MudCard>
-    </ItemContent>
-</MudTimelineItem>
+            </MudCard>
+        </ItemContent>
+    </MudTimelineItem>
+}
+else
+{
+    <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
+        <ItemContent>
+            <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
+        </ItemContent>
+        <ItemOpposite>
+            <MudCard Outlined="true" Class="p-2">
+                <MudCardContent>
+                    <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
+                    <MudText Class="align-content-center">@Address?.Description</MudText>
+                    @if (!ShowResults)
+                    {
+                        <MudText Typo="Typo.h6" Class="mb-2">@Poll.Question</MudText>
+                        <MudRadioGroup T="string" Value="SelectedOption" ValueChanged="OnSelectionChanged">
+                            @foreach (string option in Poll.Options)
+                            {
+                                <MudRadio Value="@option" Color="Color.Secondary">@option</MudRadio>
+                            }
+                        </MudRadioGroup>
+                    }
+                    else
+                    {
+                        <div class="mt-2">
+                            <MudText Typo="Typo.subtitle2">Results:</MudText>
+                            @if (Poll.Responses.Count > 0)
+                            {
+                                @foreach (var option in Poll.Options)
+                                {
+                                    <MudProgressLinear Color="Color.Primary" Value="@GetPercent(option)" Max="100" Style="height:10px" />
+                                    <MudText>@option: @GetCount(option)</MudText>
+                                }
+                            }
+                            else
+                            {
+                                <MudText>No responses yet.</MudText>
+                            }
+                        </div>
+                    }
+                </MudCardContent>
+
+                <CascadingValue Value="Address" IsFixed="true">
+                    <CascadingValue Value="OnEditAddress" IsFixed="true">
+                        <AddressEditMenuItem />
+                    </CascadingValue>
+                </CascadingValue>
+            </MudCard>
+        </ItemOpposite>
+    </MudTimelineItem>
+}
 
 @code {
     [CascadingParameter]

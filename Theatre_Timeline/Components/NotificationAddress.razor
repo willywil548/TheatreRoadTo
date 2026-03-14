@@ -4,26 +4,52 @@
 
 @inherits AddressBase
 
-<MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
-    <ItemOpposite>
-        <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
-    </ItemOpposite>
-    <ItemContent>
-        <MudCard Outlined="true" Class="p-2">
-            <MudCardContent>
-                <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
-                <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Description))</MudText>
-                <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Content))</MudText>
-            </MudCardContent>
+@if (RenderContentOnRight)
+{
+    <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
+        <ItemOpposite>
+            <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
+        </ItemOpposite>
+        <ItemContent>
+            <MudCard Outlined="true" Class="p-2">
+                <MudCardContent>
+                    <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
+                    <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Description))</MudText>
+                    <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Content))</MudText>
+                </MudCardContent>
 
-            <CascadingValue Value="Address" IsFixed="true">
-                <CascadingValue Value="OnEditAddress" IsFixed="true">
-                    <AddressEditMenuItem />
+                <CascadingValue Value="Address" IsFixed="true">
+                    <CascadingValue Value="OnEditAddress" IsFixed="true">
+                        <AddressEditMenuItem />
+                    </CascadingValue>
                 </CascadingValue>
-            </CascadingValue>
-        </MudCard>
-    </ItemContent>
-</MudTimelineItem>
+            </MudCard>
+        </ItemContent>
+    </MudTimelineItem>
+}
+else
+{
+    <MudTimelineItem Size="Size.Small" Color="GetColor(Address)">
+        <ItemContent>
+            <MudText Color="GetColor(Address)">@Address?.GetDisplayLocation()</MudText>
+        </ItemContent>
+        <ItemOpposite>
+            <MudCard Outlined="true" Class="p-2">
+                <MudCardContent>
+                    <MudText Color="GetColor(Address)" Class="align-content-center">@Address?.Title</MudText>
+                    <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Description))</MudText>
+                    <MudText Class="align-content-center">@((MarkupString)GetContentText(Address?.Content))</MudText>
+                </MudCardContent>
+
+                <CascadingValue Value="Address" IsFixed="true">
+                    <CascadingValue Value="OnEditAddress" IsFixed="true">
+                        <AddressEditMenuItem />
+                    </CascadingValue>
+                </CascadingValue>
+            </MudCard>
+        </ItemOpposite>
+    </MudTimelineItem>
+}
 
 @code {
 

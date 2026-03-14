@@ -1,8 +1,15 @@
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
+@using Theatre_TimeLine.Services
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Text.Json
 @namespace Theatre_TimeLine.Components
 
 @inject ITenantManagerService TenantManagerService
+@inject IConfiguration Configuration
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager NavigationManager
 
 <MudDialog>
     <TitleContent>
@@ -51,6 +58,34 @@
                 </div>
             </div>
         }
+        else if (addressType == AddressType.Video)
+        {
+            <!-- Require a YouTube URL for video posts -->
+            <MudTextField @bind-Value="Address.Content" Label="YouTube URL" Variant="Variant.Text" Class="mt-3" />
+            <div class="d-flex gap-2 mt-2 align-center">
+                <MudButton Variant="Variant.Outlined" OnClick="ValidateVideoAsync" Disabled="@(string.IsNullOrWhiteSpace(Address.Content) || _isValidating)">Validate</MudButton>
+                @if (_isValidating)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                }
+                @if (_videoValidated == true)
+                {
+                    <MudText Color="Color.Success">Video validated</MudText>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(Address.Content) && !IsValidYouTubeUrl(Address.Content))
+            {
+                <MudText Color="Color.Error" Class="mt-2">Please enter a valid YouTube URL (youtube.com or youtu.be).</MudText>
+            }
+            else if (!string.IsNullOrWhiteSpace(_videoValidationError))
+            {
+                <MudText Color="Color.Error" Class="mt-2">@_videoValidationError</MudText>
+            }
+            else if (!string.IsNullOrWhiteSpace(_serverHasApiKey) && _serverHasApiKey == "true")
+            {
+                <MudText Color="Color.Secondary" Class="mt-2">Server-side YouTube validation available — click Validate to check embeddability and age restriction.</MudText>
+            }
+        }
         else
         {
             <MudTextField @bind-Value="Address.Content" Label="Content" Variant="Variant.Text" Class="mt-3" />
@@ -59,7 +94,7 @@
         <MudCheckBox @bind-Value="Address.DelayRelease" Label="Delay Release" Class="mt-3" />
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="SaveAddress" Color="Color.Primary" Variant="Variant.Filled">Save</MudButton>
+        <MudButton OnClick="SaveAddress" Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!CanSave)">Save</MudButton>
         @if (!IsNewAddress)
         {
             <MudButton OnClick="DeleteAddress" Color="Color.Error" Variant="Variant.Outlined">Delete</MudButton>
@@ -117,7 +152,13 @@
 
     #endregion
 
-    protected override Task OnInitializedAsync()
+    private string? _youtubeApiKey;
+    private string? _videoValidationError;
+    private bool? _videoValidated = null;
+    private bool _isValidating = false;
+    private string? _serverHasApiKey;
+
+    protected override async Task OnInitializedAsync()
     {
         AddressTypeChanged += OnAddressTypeChanged;
 
@@ -127,7 +168,26 @@
             poll = existingPoll;
         }
 
-        return base.OnInitializedAsync();
+        // Read YouTube API key presence flag from server via config endpoint
+        // We use a lightweight request to /api/youtube/status
+        try
+        {
+            var client = HttpClientFactory.CreateClient();
+            var resp = await client.GetAsync(NavigationManager.BaseUri.TrimEnd('/') + "/api/youtube/status");
+            if (resp.IsSuccessStatusCode)
+            {
+                _serverHasApiKey = await resp.Content.ReadAsStringAsync();
+            }
+        }
+        catch
+        {
+            _serverHasApiKey = null;
+        }
+
+        // Read client-side only API key flag (not the key itself)
+        _youtubeApiKey = Configuration["ApiKeys:YouTube"];
+
+        await base.OnInitializedAsync();
     }
 
     private void SetPollType(PollType pollType)
@@ -168,8 +228,86 @@
         StateHasChanged();
     }
 
-    private void SaveAddress()
+    private async Task ValidateVideoAsync()
     {
+        _videoValidationError = null;
+        _videoValidated = null;
+
+        if (!IsValidYouTubeUrl(Address?.Content))
+        {
+            _videoValidationError = "Invalid YouTube URL";
+            _videoValidated = false;
+            StateHasChanged();
+            return;
+        }
+
+        var id = ExtractYouTubeId(Address!.Content!);
+        if (id == null)
+        {
+            _videoValidationError = "Could not extract video id";
+            _videoValidated = false;
+            StateHasChanged();
+            return;
+        }
+
+        // Prefer server-side validation endpoint
+        try
+        {
+            _isValidating = true;
+            StateHasChanged();
+            var client = HttpClientFactory.CreateClient();
+            var resp = await client.GetAsync($"{NavigationManager.BaseUri.TrimEnd('/')}/api/youtube/validate/{Uri.EscapeDataString(id)}");
+            if (resp.IsSuccessStatusCode)
+            {
+                _videoValidated = true;
+                _videoValidationError = null;
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                _videoValidationError = !string.IsNullOrWhiteSpace(body) ? body : "Video validation failed";
+                _videoValidated = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _videoValidationError = ex.Message;
+            _videoValidated = false;
+        }
+        finally
+        {
+            _isValidating = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveAddress()
+    {
+        // Clear previous validation error
+        _videoValidationError = null;
+
+        // If video, ensure validated when server supports validation
+        if (Address.AddressType == AddressType.Video)
+        {
+            if (!IsValidYouTubeUrl(Address.Content))
+            {
+                _videoValidationError = "Please enter a valid YouTube URL.";
+                StateHasChanged();
+                return;
+            }
+
+            // If server has API key configured, require validation
+            if (_serverHasApiKey == "true")
+            {
+                if (_videoValidated != true)
+                {
+                    _videoValidationError = "Please validate the video before saving.";
+                    StateHasChanged();
+                    return;
+                }
+            }
+        }
+
         List<IAddress> addresses = new List<IAddress>(Road.Addresses);
 
         // Set the poll content if it is a PollAddress
@@ -239,5 +377,36 @@
         }
 
         StateHasChanged();
+    }
+
+    private bool CanSave
+    {
+        get
+        {
+            if (Address == null) return false;
+            if (Address.AddressType == AddressType.Video)
+            {
+                // If server validation available, require _videoValidated true; otherwise just ensure URL looks correct
+                if (_serverHasApiKey == "true")
+                {
+                    return _videoValidated == true;
+                }
+
+                return IsValidYouTubeUrl(Address.Content);
+            }
+
+            // For other types, always allow save (existing behavior)
+            return true;
+        }
+    }
+
+    private bool IsValidYouTubeUrl(string? url)
+    {
+        return !string.IsNullOrEmpty(YouTubeUrlParser.ExtractVideoId(url));
+    }
+
+    private string? ExtractYouTubeId(string url)
+    {
+        return YouTubeUrlParser.ExtractVideoId(url);
     }
 }
