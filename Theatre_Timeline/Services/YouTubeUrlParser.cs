@@ -44,7 +44,11 @@ namespace Theatre_TimeLine.Services
             }
 
             var host = uri.Host.ToLowerInvariant();
-            if (!(host == "youtu.be" || host.EndsWith("youtube.com") || host.EndsWith("youtube-nocookie.com")))
+            if (!(host == "youtu.be"
+                  || host == "youtube.com"
+                  || host.EndsWith(".youtube.com")
+                  || host == "youtube-nocookie.com"
+                  || host.EndsWith(".youtube-nocookie.com")))
             {
                 return null;
             }
