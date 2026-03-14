@@ -45,11 +45,11 @@ Core responsibilities:
 - Address materialization on roads.
 
 Routing formats (local-part):
-- `tenantId@domain` ? tenant-level route.
-- `tenantId.roadId@domain` ? tenant+road route (`.` delimiter).
+- `tenantId@domain` tenant-level route. Is optional but will end with the email not being saved.
+- `tenantId.roadId@domain` tenant+road route (`.` delimiter). Is optional but will end with the email not being saved.
 
 Address creation rule:
-- Address creation occurs **only when recipient domain includes a subdomain level** (e.g. `notifications.roadstothere.com`).
+- Address creation occurs **only when recipient domain includes a subdomain level** (e.g. `notifications.example.com`).
 - If tenant-level route + subdomain: create address on **all roads** in tenant.
 - If tenant+road route + subdomain: create address on **that road only**.
 
@@ -203,7 +203,7 @@ Example:
 ```bash
 curl -X POST https://localhost:7070/api/sendgrid/inbound \
   -F "from=Dev Tester <dev@example.com>" \
-  -F "to=00000000-0000-0000-0000-3eca75185852@notifications.roadstothere.local" \
+  -F "to=00000000-0000-0000-0000-3eca75185852@notifications.example.local" \
   -F "subject=Local tenant-level test" \
   -F "text=This should route to tenant processing" \
   -F "SPF=pass" \
@@ -215,7 +215,7 @@ Road-level example (`tenant.road`):
 ```bash
 curl -X POST https://localhost:7070/api/sendgrid/inbound \
   -F "from=Dev Tester <dev@example.com>" \
-  -F "to={tenantGuid}.{roadGuid}@notifications.roadstothere.local" \
+  -F "to={tenantGuid}.{roadGuid}@notifications.example.local" \
   -F "subject=Local road-level test" \
   -F "text=This should create one road address" \
   -F "SPF=pass" \
@@ -229,5 +229,5 @@ Notes:
 
 ---
 
-**Status**: ? Tenant/Road-routed inbound processing enabled
+**Status**: Tenant/Road-routed inbound processing enabled
 
