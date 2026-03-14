@@ -9,8 +9,6 @@ namespace Theatre_TimeLine.Controllers
     public class YouTubeController : ControllerBase
     {
         private readonly IYouTubeValidationService _validationService;
-        private readonly IConfiguration _configuration;
-        private readonly ILogger<YouTubeController> _logger;
 
         public YouTubeController(
             IYouTubeValidationService validationService,
@@ -18,8 +16,6 @@ namespace Theatre_TimeLine.Controllers
             ILogger<YouTubeController> logger)
         {
             _validationService = validationService;
-            _configuration = configuration;
-            _logger = logger;
         }
 
         /// <summary>
