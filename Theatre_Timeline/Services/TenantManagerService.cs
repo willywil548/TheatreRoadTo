@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Globalization;
 using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Models;
 
@@ -264,7 +265,7 @@ namespace Theatre_TimeLine.Services
                 }
 
                 var markerText = File.ReadAllText(markerPath).Trim();
-                if (!DateTime.TryParse(markerText, out var lastResetDate))
+                if (!DateTime.TryParseExact(markerText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var lastResetDate))
                 {
                     // Invalid marker - reset
                     if (Directory.Exists(demoRoot))
