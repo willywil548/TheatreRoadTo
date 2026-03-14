@@ -402,7 +402,6 @@ namespace Theatre_TimeLine.Services
             var addresses = new List<Address>();
             int count = 10;
             var span = (road.EndTime!.Value - road.StartTime!.Value).TotalMinutes;
-            var rnd = new Random(42);
             for (int i = 0; i < count; i++)
             {
                 var offset = TimeSpan.FromMinutes((span * i) / Math.Max(1, count - 1));
