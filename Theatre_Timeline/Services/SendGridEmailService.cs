@@ -286,7 +286,8 @@ namespace Theatre_TimeLine.Services
                     Filename: null,
                     From: email.GetFromEmail(),
                     Subject: email.Subject,
-                    SpamScore: email.GetSpamScoreValue());
+                    SpamScore: email.GetSpamScoreValue(),
+                    Saved: false);
             }
 
             _logger.LogInformation("Webhook validation passed. Headers captured: {HasHeaders}",
@@ -570,7 +571,7 @@ namespace Theatre_TimeLine.Services
         /// <inheritdoc />
         public async Task<EmailAccessScope> ResolveEmailAccessAsync(ClaimsPrincipal user)
         {
-            if (!user.Identity?.IsAuthenticated ?? false)
+            if (user.Identity?.IsAuthenticated != true)
             {
                 return new EmailAccessScope(false, false, []);
             }
@@ -756,13 +757,6 @@ namespace Theatre_TimeLine.Services
         {
             try
             {
-                var road = _tenantManagerService.GetRoad(roadId);
-                if (road.TenantId != tenantId)
-                {
-                    _logger.LogWarning("Inbound email route mismatch: road {RoadId} does not belong to tenant {TenantId}", roadId, tenantId);
-                    return;
-                }
-
                 // Create a simple notification address from email metadata/body.
                 var address = new Address
                 {
@@ -774,10 +768,11 @@ namespace Theatre_TimeLine.Services
                     DelayRelease = false
                 };
 
-                // Append and persist by re-saving the road.
-                var existingAddresses = road.Addresses ?? Array.Empty<Address>();
-                road.Addresses = [.. existingAddresses, address];
-                _tenantManagerService.SaveRoad(road);
+                if (!_tenantManagerService.TryAppendAddressToRoad(tenantId, roadId, address))
+                {
+                    _logger.LogWarning("Inbound email route mismatch: road {RoadId} does not belong to tenant {TenantId}", roadId, tenantId);
+                    return;
+                }
 
                 _logger.LogInformation("Created inbound email address for tenant {TenantId}, road {RoadId}", tenantId, roadId);
             }

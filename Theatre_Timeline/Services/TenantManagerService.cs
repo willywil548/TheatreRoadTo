@@ -156,6 +156,35 @@ namespace Theatre_TimeLine.Services
         }
 
         /// <inheritdoc />
+        public bool TryAppendAddressToRoad(Guid tenantId, Guid roadId, Address address)
+        {
+            writeManager.Wait();
+            try
+            {
+                var tenant = this.GetTenant(tenantId);
+                if (tenant == null)
+                {
+                    return false;
+                }
+
+                var road = tenant.Roads.FirstOrDefault(r => r.RoadId == roadId);
+                if (road == null || road.TenantId != tenantId)
+                {
+                    return false;
+                }
+
+                var existingAddresses = road.Addresses ?? [];
+                road.Addresses = [.. existingAddresses, address];
+                tenant.SaveRoad(road);
+                return true;
+            }
+            finally
+            {
+                writeManager.Release();
+            }
+        }
+
+        /// <inheritdoc />
         public IRoadToThere GetRoad(Guid roadId)
         {
             ITenantContainer? tenant = this.GetTenant(roadId);
