@@ -10,7 +10,10 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject IClipboardService ClipboardService
+@inject ISendGridEmailService SendGridEmailService
+@inject ILogger<TenantManager> Logger
 @implements IRoadToThereManager
+@implements IAsyncDisposable
 @attribute [Authorize]
 @page "/TenantManagement/{Tenant?}"
 
@@ -142,14 +145,76 @@ else
                     </MudStack>
                 </MudTabPanel>
 
-                @* Tab 2: User Management *@
+                @* Tab 2: Email *@
+                <MudTabPanel Text="Email"
+                             Icon="@Icons.Material.Filled.Email"
+                             BadgeData="@GetEmailErrorBadgeData()"
+                             BadgeColor="Color.Error">
+                    <MudStack Spacing="3">
+                        <div class="d-flex flex-wrap justify-space-between align-center gap-2">
+                            <MudText Typo="Typo.h6">Received Emails</MudText>
+                            <div class="d-flex align-center gap-2">
+                                <MudSelect T="EmailStatusFilter"
+                                           Value="_emailStatusFilter"
+                                           ValueChanged="OnEmailStatusFilterChanged"
+                                           Label="Filter"
+                                           Variant="Variant.Outlined"
+                                           Dense="true"
+                                           Style="min-width: 160px;">
+                                    <MudSelectItem T="EmailStatusFilter" Value="EmailStatusFilter.All">All</MudSelectItem>
+                                    <MudSelectItem T="EmailStatusFilter" Value="EmailStatusFilter.Error">Errors</MudSelectItem>
+                                    <MudSelectItem T="EmailStatusFilter" Value="EmailStatusFilter.Success">Success</MudSelectItem>
+                                </MudSelect>
+                            </div>
+                        </div>
+
+                        @if (_isEmailsLoading)
+                        {
+                            <MudProgressLinear Indeterminate="true" Color="Color.Info" />
+                        }
+                        else if (_tenantEmailItems.Count == 0)
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                                No new emails.
+                            </MudAlert>
+                        }
+                        else if (_filteredTenantEmailItems.Count == 0)
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                                No emails match the selected filter.
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudList T="TenantEmailListItem" Dense="true" Clickable="true">
+                                @foreach (var emailItem in _filteredTenantEmailItems)
+                                {
+                                    <MudListItem T="TenantEmailListItem" Value="emailItem" OnClick="() => OpenEmailDialogAsync(emailItem)">
+                                        <MudIcon Icon="@GetStatusIcon(emailItem.Status)" Class="mr-2" Color="@GetStatusColor(emailItem.Status)" />
+                                        <div class="w-100 d-flex justify-space-between align-center gap-2">
+                                            <div>
+                                                <MudText Typo="Typo.body1">@emailItem.Title</MudText>
+                                                <MudText Typo="Typo.caption" Color="Color.Secondary">@emailItem.Subtitle</MudText>
+                                            </div>
+                                            <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(emailItem.Status)" Variant="Variant.Outlined">
+                                                @GetStatusLabel(emailItem.Status)
+                                            </MudChip>
+                                        </div>
+                                    </MudListItem>
+                                }
+                            </MudList>
+                        }
+                    </MudStack>
+                </MudTabPanel>
+
+                @* Tab 3: User Management *@
                 <MudTabPanel Text="Users" Icon="@Icons.Material.Filled.People">
                     <CascadingAuthenticationState>
                         <TenantUserManagement TenantContainer="@_selectedTenant" />
                     </CascadingAuthenticationState>
                 </MudTabPanel>
 
-                @* Tab 3: Tenant Settings *@
+                @* Tab 4: Tenant Settings *@
                 <MudTabPanel Text="Settings" Icon="@Icons.Material.Filled.Settings">
                     <MudStack Spacing="4">
                         <MudText Typo="Typo.h6">Tenant Settings</MudText>
@@ -223,10 +288,38 @@ else
     private bool _isLoading = true;
     private bool _isGlobalAdmin = false;
     private string _userEmail = string.Empty;
+    private ClaimsPrincipal? _currentUser;
     private List<ITenantContainer> _authorizedTenants = new();
     private ITenantContainer? _selectedTenant;
     private Guid? _selectedTenantId;
     private int _activeTabIndex = 0;
+
+    private enum EmailIngestionStatus
+    {
+        Success,
+        Error
+    }
+
+    private enum EmailStatusFilter
+    {
+        All,
+        Error,
+        Success
+    }
+
+    private sealed record TenantEmailListItem(
+        StoredEmailSummary Summary,
+        string Title,
+        string Subtitle,
+        string Target,
+        EmailIngestionStatus Status,
+        string StatusMessage,
+        SendGridInboundEmail? Email);
+
+    private List<TenantEmailListItem> _tenantEmailItems = new();
+    private List<TenantEmailListItem> _filteredTenantEmailItems = new();
+    private EmailStatusFilter _emailStatusFilter = EmailStatusFilter.All;
+    private bool _isEmailsLoading;
 
     [Parameter]
     public string? Tenant { get; set; }
@@ -235,8 +328,8 @@ else
     {
         await base.OnInitializedAsync();
 
-        ClaimsPrincipal user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-        _userEmail = user.GetEmail();
+        _currentUser = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        _userEmail = _currentUser.GetEmail();
 
         await LoadPermissionsAsync();
 
@@ -253,7 +346,23 @@ else
             _selectedTenant = _authorizedTenants[0];
         }
 
+        await LoadTenantEmailsAsync();
+        SendGridEmailService.InboundEmailIngested += OnInboundEmailIngested;
         _isLoading = false;
+    }
+
+    private void OnInboundEmailIngested(object? sender, EmailIngestedEventArgs e)
+    {
+        if (_selectedTenant is null || e.TenantId != _selectedTenant.TenantId)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(async () =>
+        {
+            await LoadTenantEmailsAsync();
+            StateHasChanged();
+        });
     }
 
     /// <summary>
@@ -293,7 +402,7 @@ else
         _authorizedTenants = authorizedList;
     }
 
-    private void OnTenantSelected(Guid? tenantId)
+    private async Task OnTenantSelected(Guid? tenantId)
     {
         _selectedTenantId = tenantId;
         _selectedTenant = tenantId.HasValue
@@ -311,6 +420,178 @@ else
         }
 
         _activeTabIndex = 0; // Reset to Roads tab when switching tenants
+        await LoadTenantEmailsAsync();
+    }
+
+    private async Task LoadTenantEmailsAsync()
+    {
+        if (_isEmailsLoading)
+        {
+            return;
+        }
+
+        _tenantEmailItems.Clear();
+        _filteredTenantEmailItems.Clear();
+
+        if (_selectedTenant is null || _currentUser is null)
+        {
+            return;
+        }
+
+        _isEmailsLoading = true;
+        try
+        {
+            var result = await SendGridEmailService.TryListStoredEmailsForAccessAsync(_currentUser, _selectedTenant.TenantId);
+            if (!result.Allowed)
+            {
+                return;
+            }
+
+            var sorted = result.Emails.OrderByDescending(e => e.Created).ToList();
+            var items = new List<TenantEmailListItem>(sorted.Count);
+
+            foreach (var summary in sorted)
+            {
+                var getResult = await SendGridEmailService.TryGetStoredEmailForAccessAsync(_currentUser, summary.Filename);
+                var email = getResult.Allowed && getResult.EmailResult.Status == StoredEmailLookupStatus.Success
+                    ? getResult.EmailResult.Email
+                    : null;
+
+                var from = !string.IsNullOrWhiteSpace(email?.GetFromDisplayName())
+                    ? email.GetFromDisplayName()!
+                    : email?.GetFromEmail() ?? "Unknown";
+                var subject = string.IsNullOrWhiteSpace(email?.Subject) ? "(no subject)" : email!.Subject!;
+                var target = BuildTargetLabel(email);
+                var title = subject;
+                var subtitle = $"From {from} • {target} • Received {summary.Created.ToLocalTime():g}";
+
+                var status = EmailIngestionStatus.Error;
+                const string statusMessage = "Ingestion error: AI processing is not configured yet.";
+
+                items.Add(new TenantEmailListItem(summary, title, subtitle, target, status, statusMessage, email));
+            }
+
+            _tenantEmailItems = items;
+            ApplyEmailFilter();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load tenant emails for tenant {TenantId}", _selectedTenant.TenantId);
+        }
+        finally
+        {
+            _isEmailsLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OpenEmailDialogAsync(TenantEmailListItem emailItem)
+    {
+        if (_currentUser is null)
+        {
+            return;
+        }
+
+        var email = emailItem.Email;
+        if (email is null)
+        {
+            var result = await SendGridEmailService.TryGetStoredEmailForAccessAsync(_currentUser, emailItem.Summary.Filename);
+            if (!result.Allowed || result.EmailResult.Status != StoredEmailLookupStatus.Success || result.EmailResult.Email is null)
+            {
+                Snackbar.Add("Unable to open email.", Severity.Warning);
+                return;
+            }
+
+            email = result.EmailResult.Email;
+        }
+
+        var parameters = new DialogParameters<TenantEmailViewDialog>
+        {
+            { x => x.Email, email },
+            { x => x.Target, emailItem.Target },
+            { x => x.IngestionStatus, emailItem.StatusMessage },
+            { x => x.CreatedUtc, emailItem.Summary.Created }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Large,
+            FullWidth = true
+        };
+
+        await DialogService.ShowAsync<TenantEmailViewDialog>("Inbound Email", parameters, options);
+    }
+
+    private void OnEmailStatusFilterChanged(EmailStatusFilter filter)
+    {
+        _emailStatusFilter = filter;
+        ApplyEmailFilter();
+    }
+
+    private void ApplyEmailFilter()
+    {
+        _filteredTenantEmailItems = _emailStatusFilter switch
+        {
+            EmailStatusFilter.Error => _tenantEmailItems.Where(e => e.Status == EmailIngestionStatus.Error).ToList(),
+            EmailStatusFilter.Success => _tenantEmailItems.Where(e => e.Status == EmailIngestionStatus.Success).ToList(),
+            _ => _tenantEmailItems.ToList()
+        };
+    }
+
+    private int GetEmailErrorCount() =>
+        _tenantEmailItems.Count(e => e.Status == EmailIngestionStatus.Error);
+
+    private object? GetEmailErrorBadgeData()
+    {
+        var errorCount = _tenantEmailItems.Count(e => e.Status == EmailIngestionStatus.Error);
+        return errorCount > 0 ? errorCount : null;
+    }
+
+    private static string GetStatusIcon(EmailIngestionStatus status) =>
+        status == EmailIngestionStatus.Success ? Icons.Material.Filled.MarkEmailRead : Icons.Material.Filled.Error;
+
+    private static Color GetStatusColor(EmailIngestionStatus status) =>
+        status == EmailIngestionStatus.Success ? Color.Success : Color.Error;
+
+    private static string GetStatusLabel(EmailIngestionStatus status) =>
+        status == EmailIngestionStatus.Success ? "Success" : "Error";
+
+    private string BuildTargetLabel(SendGridInboundEmail? email)
+    {
+        var tenantName = _selectedTenant?.TenantName ?? "Tenant";
+        if (email is null)
+        {
+            return $"{tenantName} • all roads";
+        }
+
+        var toEmail = email.GetToEmail();
+        if (string.IsNullOrWhiteSpace(toEmail))
+        {
+            return $"{tenantName} • all roads";
+        }
+
+        var atIndex = toEmail.IndexOf('@');
+        if (atIndex <= 0)
+        {
+            return $"{tenantName} • all roads";
+        }
+
+        var localPart = toEmail[..atIndex];
+        var routeParts = localPart.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (routeParts.Length == 2 && Guid.TryParse(routeParts[1], out var roadId))
+        {
+            var roadTitle = _selectedTenant?.Roads.FirstOrDefault(r => r.RoadId == roadId)?.Title;
+            if (!string.IsNullOrWhiteSpace(roadTitle))
+            {
+                return roadTitle;
+            }
+
+            return "Selected road";
+        }
+
+        return $"{tenantName} • all roads";
     }
 
     public void CreateRoad(ITenantContainer tenantContainer)
@@ -323,6 +604,7 @@ else
             StartTime = DateTime.Now,
             EndTime = DateTime.Now.AddDays(30)
         };
+
         tenantContainer.SaveRoad(roadToThere);
         TenantManagerService.SaveRoad(roadToThere);
         Snackbar.Add("Road created successfully.", Severity.Success);
@@ -332,7 +614,7 @@ else
     /// <summary>
     /// Save the road to the tenant.
     /// </summary>
-    public void SaveRoad(IRoadToThere roadToThere)
+    public void SaveRoad(IRoadToThere? roadToThere)
     {
         TenantManagerService.SaveRoad(roadToThere);
         Snackbar.Add("Road saved.", Severity.Success);
@@ -421,7 +703,7 @@ else
         var dialog = await DialogService.ShowAsync<MudMessageBox>("Confirm Delete", parameters, options);
         var result = await dialog.Result;
 
-        if (result is not null && !result.Canceled)
+        if (result != null && !result.Canceled)
         {
             await RemoveTenantAsync(tenantContainer);
         }
@@ -461,4 +743,11 @@ else
         await ClipboardService.CopyToClipboard(_selectedTenant.TenantId.ToString());
         Snackbar.Add("Tenant ID copied to clipboard.", Severity.Success);
     }
+
+    public ValueTask DisposeAsync()
+    {
+        SendGridEmailService.InboundEmailIngested -= OnInboundEmailIngested;
+        return ValueTask.CompletedTask;
+    }
 }
+

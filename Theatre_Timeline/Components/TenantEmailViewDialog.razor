@@ -1,0 +1,66 @@
+@namespace Theatre_TimeLine.Components
+@using Theatre_TimeLine.Models
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Email" Class="mr-2" />
+            Email Details
+        </MudText>
+    </TitleContent>
+
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.caption" Color="Color.Secondary">Received: @CreatedUtc.ToLocalTime().ToString("f")</MudText>
+
+            <MudText Typo="Typo.subtitle2">Ingestion</MudText>
+            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">
+                @IngestionStatus
+            </MudAlert>
+
+            <MudDivider />
+
+            <MudText Typo="Typo.subtitle2">From</MudText>
+            <MudText Typo="Typo.body2">@FromDisplay</MudText>
+
+            <MudText Typo="Typo.subtitle2">Target</MudText>
+            <MudText Typo="Typo.body2">@Target</MudText>
+
+            <MudText Typo="Typo.subtitle2">Subject</MudText>
+            <MudText Typo="Typo.body2">@(string.IsNullOrWhiteSpace(Email.Subject) ? "(no subject)" : Email.Subject)</MudText>
+
+            <MudText Typo="Typo.subtitle2">Body</MudText>
+            <MudPaper Elevation="0" Class="pa-3" Style="max-height: 350px; overflow-y: auto; border: 1px solid var(--mud-palette-lines-default);">
+                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@(Email.GetBodyContent() ?? "(no readable body content)")</MudText>
+            </MudPaper>
+        </MudStack>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance? MudDialog { get; set; }
+
+    [Parameter, EditorRequired]
+    public SendGridInboundEmail Email { get; set; } = default!;
+
+    [Parameter]
+    public string Target { get; set; } = "Tenant • all roads";
+
+    [Parameter]
+    public string IngestionStatus { get; set; } = "Ingestion error: AI processing is not configured yet.";
+
+    [Parameter]
+    public DateTime CreatedUtc { get; set; }
+
+    private string FromDisplay =>
+        !string.IsNullOrWhiteSpace(Email.GetFromDisplayName())
+            ? Email.GetFromDisplayName()!
+            : Email.GetFromEmail() ?? "Unknown";
+
+    private void Close() => MudDialog?.Close();
+}

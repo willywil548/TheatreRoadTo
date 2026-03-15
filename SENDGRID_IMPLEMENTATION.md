@@ -1,8 +1,16 @@
-﻿# SendGrid Email Inbound Parse - Implementation Summary
+# SendGrid Email Inbound Parse - Implementation Summary
 
 ## Overview
 
-This implementation provides a secure email reception system for SendGrid's Inbound Parse webhook. Emails are received, validated, encrypted using ASP.NET Core Data Protection API, and stored to disk. Global Admins can retrieve and list stored emails through authenticated API endpoints.
+This implementation provides a secure inbound email pipeline for SendGrid Parse webhook traffic.
+
+Current behavior:
+- Validates webhook source.
+- Resolves routing from recipient local-part.
+- Stores inbound payload encrypted under tenant-scoped storage.
+- Optionally materializes road `Address` entries based on routing + domain subdomain rules.
+- Global Admins can read/list all tenant emails.
+- Tenant Managers can read/list emails for their own tenant scope.
 
 ## Components
 
@@ -14,59 +22,66 @@ This implementation provides a secure email reception system for SendGrid's Inbo
 
 | Method | Endpoint | Purpose | Auth |
 |--------|----------|---------|------|
-| POST | `/api/sendgrid/inbound` | Receive email from SendGrid | Anonymous |
-| GET | `/api/sendgrid/email/{filename}` | Retrieve a specific email | Global Admin |
-| GET | `/api/sendgrid/emails` | List all stored emails | Global Admin |
-| GET | `/api/sendgrid/health` | Health check and status | Anonymous |
+| POST | `/api/sendgrid/inbound` | Receive/process email from SendGrid | Anonymous |
+| GET | `/api/sendgrid/email/{filename}` | Retrieve a specific stored email | Global Admin or Tenant Manager (own tenant) |
+| GET | `/api/sendgrid/emails` | List stored emails | Global Admin or Tenant Manager (own tenant) |
+| GET | `/api/sendgrid/health` | Health/status | Anonymous |
 
-**Security Features**:
-- Webhook validation via `ISendGridWebhookValidator`
-- Development mode bypass using `IHostEnvironment.IsDevelopment()`
-- PII masking in logs (email addresses masked as `u***@e***.com`)
-- Log injection prevention via sanitization
-- Path traversal protection with defense-in-depth validation
-- Correlation IDs for error tracking (no exception details exposed)
-- Global Admin authorization for email retrieval
+**Controller Notes**:
+- Delegates processing logic to `ISendGridEmailService`.
+- Returns `200 OK` for acknowledged-but-not-saved flows.
+- Returns `401` when webhook validation fails.
 
-### 2. SendGrid Inbound Email Model
+### 2. SendGrid Email Service
+
+**File**: `Theatre_Timeline/Services/SendGridEmailService.cs`
+
+Core responsibilities:
+- Webhook validation orchestration.
+- Recipient routing resolution.
+- Tenant/demo checks.
+- Attachment metadata capture.
+- Encrypted persistence.
+- Address materialization on roads.
+
+Routing formats (local-part):
+- `tenantId@domain` tenant-level route. Is optional but will end with the email not being saved.
+- `tenantId.roadId@domain` tenant+road route (`.` delimiter). Is optional but will end with the email not being saved.
+
+Address creation rule:
+- Address creation occurs **only when recipient domain includes a subdomain level** (e.g. `notifications.example.com`).
+- If tenant-level route + subdomain: create address on **all roads** in tenant.
+- If tenant+road route + subdomain: create address on **that road only**.
+
+Additional rules:
+- Demo tenant is excluded from persistence/address creation.
+- Unreadable or unknown tenant routing is acknowledged but not saved.
+
+### 3. SendGrid Inbound Email Model
 
 **File**: `Theatre_Timeline/Models/SendGridInboundEmail.cs`
 
-**Features**:
-- Strongly-typed model with `[FromForm]` binding support
-- `[BindProperty]` attributes for form field mapping
-- `[BindNever]` for metadata fields to prevent over-posting
-- MimeKit integration for proper MIME parsing
-- Helper methods for extracting email addresses, body content, spam detection
+Features:
+- Strongly-typed form binding.
+- MIME parsing helpers via MimeKit.
+- DKIM/SPF/spam helper methods.
+- Envelope parsing support.
 
-**Key Methods**:
-- `GetFromEmail()` / `GetToEmail()` - Extract email addresses
-- `GetTextBody()` / `GetHtmlBody()` - Get body content (uses MimeKit)
-- `IsDkimValid()` / `IsSpfValid()` - Check email authentication
-- `IsLikelySpam()` - Spam score threshold check
-- `GetParsedMessage()` - Get full MimeKit `MimeMessage` for advanced processing
-
-### 3. Email Encryption Service
+### 4. Email Encryption Service
 
 **File**: `Theatre_Timeline/Services/EmailEncryptionService.cs`
 
 - Interface: `IEmailEncryptionService`
-- Uses ASP.NET Core Data Protection API
-- Purpose string: `"Theatre_TimeLine.EmailStorage.v1"`
-- Methods:
-  - `Encrypt(string plaintext)` - Encrypts data to Base64
-  - `Decrypt(string encryptedData)` - Decrypts from Base64
-  - `WriteEncryptedFileAsync(filePath, data)` - Encrypts and writes to file
-  - `ReadEncryptedFileAsync(filePath)` - Reads and decrypts from file
+- Uses ASP.NET Core Data Protection API.
+- Purpose string: `Theatre_TimeLine.EmailStorage.v1`.
 
-### 4. Webhook Validator
+### 5. Webhook Validator
 
 **File**: `Theatre_Timeline/Services/SendGridWebhookValidator.cs`
 
 - Interface: `ISendGridWebhookValidator`
-- Captures all request headers for audit/debugging
-- Development mode: Accepts all requests (uses `IHostEnvironment.IsDevelopment()`)
-- Production mode: Validates SendGrid indicators (User-Agent, X-SG-* headers)
+- Captures request headers.
+- Development mode bypass (`IsDevelopment()`), production indicator checks.
 
 ## Configuration
 
@@ -75,251 +90,198 @@ This implementation provides a secure email reception system for SendGrid's Inbo
 ```json
 {
   "SendGrid": {
-    "EmailStoragePath": "./emails",
-    "EnableEncryption": true
+    "EnableEncryption": true,
+    "RequireIpValidation": false,
+    "RequireAuthValidation": false
+  },
+  "TenantManager": {
+    "DemoTenantId": "00000000-0000-0000-0000-3eca75185852"
   }
 }
 ```
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `EmailStoragePath` | `./emails` | Directory for encrypted email storage |
-| `EnableEncryption` | `true` | Enable/disable encryption (always true in current impl) |
+| Setting | Description |
+|---------|-------------|
+| `SendGrid:EnableEncryption` | Health/status indicator for encryption setting |
+| `SendGrid:RequireIpValidation` | Health/status indicator for IP validation requirement |
+| `SendGrid:RequireAuthValidation` | Health/status indicator for auth validation requirement |
+| `TenantManager:DemoTenantId` | Tenant excluded from inbound persistence |
 
 ## File Storage
 
 ### Location
-Default: `{AppDirectory}/emails/`
+Tenant-scoped:
+- `{TenantRoot}/emails/`
 
 ### Naming Convention
-```
-email_{yyyyMMdd_HHmmss}_{sanitized_from}_{guid}.enc
-```
-Example: `email_20240115_103045_john.doe_at_example.com_a1b2c3d4-e5f6-7890-abcd-ef1234567890.enc`
+`email_{yyyyMMdd_HHmmss}_{sanitized_from}_{guid}.enc`
 
-### File Contents (Encrypted JSON)
-```json
-{
-  "email": "...raw MIME content...",
-  "from": "John Doe <john.doe@example.com>",
-  "to": "recipient@yourdomain.com",
-  "subject": "Email subject",
-  "text": "Plain text body",
-  "html": "<html>HTML body</html>",
-  "dkim": "{@example.com : pass}",
-  "SPF": "pass",
-  "spam_score": "1.2",
-  "envelope": "{\"to\":[\"recipient@yourdomain.com\"],\"from\":\"john.doe@example.com\"}",
-  "receivedAt": "2024-01-15T10:30:45.1234567Z",
-  "encrypted": true,
-  "validatedSource": true,
-  "storedAs": "email_20240115_103045_john.doe_at_example.com_a1b2c3d4.enc",
-  "webhookHeaders": { ... },
-  "attachmentsList": [...]
-}
-```
+### StoredAs Format
+`{tenantId}/{filename}`
 
-## API Reference
+## API Behavior
 
-### POST /api/sendgrid/inbound
-Receives email from SendGrid webhook.
+### POST `/api/sendgrid/inbound`
 
-**Request**: `multipart/form-data` (sent by SendGrid)
+Possible outcomes:
 
-**Response** (200 OK):
-```json
-{
-  "message": "Email received, validated, encrypted, and saved successfully",
-  "file": "email_20240115_103045_john.doe_at_example.com_a1b2c3d4.enc",
-  "from": "john.doe@example.com",
-  "subject": "Test email",
-  "spamScore": 1.2,
-  "validated": true
-}
-```
+1. **Unauthorized source**
+   - `401 Unauthorized`
+   - `{ error: "Invalid webhook source", reason: "..." }`
 
-**Response** (500 Error):
-```json
-{
-  "error": "Failed to process email",
-  "errorId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-}
-```
+2. **Acknowledged but not saved** (e.g., unreadable route, unknown tenant, demo tenant)
+   - `200 OK`
+   - `{ message: "Email acknowledged but not saved", reason: "...", saved: false, ... }`
 
-### GET /api/sendgrid/emails
-Lists all stored emails. **Requires Global Admin**.
+3. **Saved successfully**
+   - `200 OK`
+   - `{ message: "Email received, validated, encrypted, and saved successfully", file: "{tenantId}/email_...enc", saved: true, ... }`
 
-**Response** (200 OK):
-```json
-{
-  "count": 5,
-  "emails": [
-    {
-      "filename": "email_20240115_103045_john.doe_at_example.com_a1b2c3d4.enc",
-      "size": 12345,
-      "created": "2024-01-15T10:30:45Z"
-    }
-  ]
-}
-```
+### GET `/api/sendgrid/emails`
+Lists stored encrypted email summaries. **Global Admin or Tenant Manager required**.
+- Global Admin: all tenant emails.
+- Tenant Manager: only emails within managed tenant(s).
 
-### GET /api/sendgrid/email/{filename}
-Retrieves and decrypts a specific email. **Requires Global Admin**.
+### GET `/api/sendgrid/email/{filename}`
+Retrieves/decrypts a stored email. **Global Admin or Tenant Manager required**.
+- Global Admin: any tenant email.
+- Tenant Manager: only tenant-qualified filenames in managed tenant scope.
 
-**Response** (200 OK):
-```json
-{
-  "email": { /* full SendGridInboundEmail object */ },
-  "parsed": {
-    "fromEmail": "john.doe@example.com",
-    "fromName": "John Doe",
-    "toEmail": "recipient@yourdomain.com",
-    "bodyText": "Plain text content...",
-    "bodyContent": "Best available body content...",
-    "isDkimValid": true,
-    "isSpfValid": true,
-    "isSpam": false
-  }
-}
-```
-
-### GET /api/sendgrid/health
-Health check endpoint.
-
-**Response** (200 OK):
-```json
-{
-  "status": "healthy",
-  "storagePath": "emails",
-  "encryption": "enabled",
-  "validation": {
-    "ipRequired": false,
-    "authRequired": false
-  },
-  "timestamp": "2024-01-15T10:30:45Z"
-}
-```
+### GET `/api/sendgrid/health`
+Returns health + validation configuration snapshot.
 
 ## Security Implementation
 
-### Current Security Measures
+Current measures:
+- Encryption at rest (Data Protection API)
+- Webhook validation
+- PII masking in logs
+- Log sanitization
+- Path traversal protection on retrieval
+- Admin-only read/list access
+- Over-posting prevention in model (`[BindNever]`)
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| Encryption at rest | ✅ | Data Protection API |
-| Webhook validation | ✅ | SendGrid indicator detection |
-| Development bypass | ✅ | Uses `IHostEnvironment.IsDevelopment()` |
-| PII masking in logs | ✅ | Email addresses masked |
-| Log injection prevention | ✅ | Control characters removed |
-| Path traversal protection | ✅ | Filename validation + path containment check |
-| Error correlation IDs | ✅ | No exception details in responses |
-| Admin-only retrieval | ✅ | Global Admin group membership required |
-| Over-posting prevention | ✅ | `[BindNever]` on metadata fields |
-
-### Production Recommendations
-
-- [ ] **Webhook signature validation** - Validate SendGrid webhook signatures
-- [ ] **IP whitelisting** - Restrict to SendGrid IP ranges
-- [ ] **Key management** - Store Data Protection keys in Azure Key Vault
-- [ ] **Data retention** - Implement automatic cleanup policies
-- [ ] **Rate limiting** - Protect against webhook abuse
-
-## Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| MimeKit | MIME email parsing |
-| Microsoft.AspNetCore.DataProtection | Email encryption |
-
-## Architecture
+## Architecture (Current)
 
 ```
-┌─────────────────┐
-│    SendGrid     │
-│    Webhook      │
-└────────┬────────┘
-         │ POST /api/sendgrid/inbound
-         ▼
-┌─────────────────────────────────────┐
-│  SendGridWebhookValidator           │
-│  - Capture headers                  │
-│  - Validate source (dev bypass)     │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  SendGridController                 │
-│  - Model binding via [FromForm]     │
-│  - Set metadata fields              │
-│  - Spam detection                   │
-│  - Serialize to JSON                │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  EmailEncryptionService             │
-│  - Encrypt with Data Protection API │
-│  - Write to disk                    │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Encrypted Storage                  │
-│  ./emails/*.enc                     │
-│  (Admin API access only)            │
-└─────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Global Admin APIs                  │
-│  GET /api/sendgrid/emails           │
-│  GET /api/sendgrid/email/{filename} │
-└─────────────────────────────────────┘
+SendGrid Inbound Parse
+        |
+        v
+POST /api/sendgrid/inbound
+        |
+        v
+SendGridWebhookValidator
+        |
+        v
+SendGridEmailService
+  - resolve tenant / tenant.road
+  - demo exclusion
+  - enrich + encrypt + persist
+  - optional address creation (subdomain required)
+        |
+        +--> tenant storage: {tenantRoot}/emails/*.enc
+        |
+        +--> road address creation
+              - tenant route -> all roads
+              - tenant.road route -> single road
 ```
 
-## SendGrid Configuration
+## SendGrid Configuration Notes
 
-### Inbound Parse Setup
-1. Go to SendGrid Dashboard → Settings → Inbound Parse
-2. Add destination URL: `https://yourdomain.com/api/sendgrid/inbound`
-3. Configure domain/subdomain to forward emails
-4. Enable "POST the raw, full MIME message" for full email content
+To use road/tenant routing, configure inbound parse mailbox local-parts accordingly:
+- Tenant only: `{tenantGuid}`
+- Tenant + road: `{tenantGuid}.{roadGuid}`
 
-### Expected Form Fields
-| Field | Description |
-|-------|-------------|
-| `from` | Sender with display name |
-| `to` | Recipient(s) |
-| `subject` | Email subject |
-| `text` | Plain text body |
-| `html` | HTML body |
-| `email` | Raw MIME message |
-| `envelope` | SMTP envelope (JSON) |
-| `dkim` | DKIM verification result |
-| `SPF` | SPF verification result |
-| `spam_score` | SpamAssassin score |
-| `attachments` | Attachment count |
-| `attachment-info` | Attachment metadata (JSON) |
+To trigger address creation, route through a domain with subdomain level (for example `notifications.example.com`).
 
-## Testing
+## Local Development Testing
 
-### Health Check
-```bash
-curl https://localhost:7070/api/sendgrid/health
-```
+For local testing, you can still post directly to the inbound API endpoint instead of using SendGrid delivery.
 
-### Simulate Email (Development)
+### Bash / Git Bash
+
+Tenant-level example:
+
 ```bash
 curl -X POST https://localhost:7070/api/sendgrid/inbound \
-  -F "from=John Doe <john@example.com>" \
-  -F "to=recipient@yourdomain.com" \
-  -F "subject=Test Email" \
-  -F "text=This is a test email" \
+  -F "from=Dev Tester <dev@example.com>" \
+  -F "to=00000000-0000-0000-0000-3eca75185852@notifications.example.local" \
+  -F "subject=Local tenant-level test" \
+  -F "text=This should route to tenant processing" \
   -F "SPF=pass" \
   -F "dkim={@example.com : pass}"
 ```
 
+Road-level example (`tenant.road`):
+
+```bash
+curl -X POST https://localhost:7070/api/sendgrid/inbound \
+  -F "from=Dev Tester <dev@example.com>" \
+  -F "to={tenantGuid}.{roadGuid}@notifications.example.local" \
+  -F "subject=Local road-level test" \
+  -F "text=This should create one road address" \
+  -F "SPF=pass" \
+  -F "dkim={@example.com : pass}"
+```
+
+### Windows PowerShell
+
+Tenant-level example:
+
+```powershell
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound `
+  -F "from=Dev Tester <dev@example.com>" `
+  -F "to=00000000-0000-0000-0000-3eca75185852@notifications.example.local" `
+  -F "subject=Local tenant-level test" `
+  -F "text=This should route to tenant processing" `
+  -F "SPF=pass" `
+  -F "dkim={@example.com : pass}"
+```
+
+Road-level example (`tenant.road`):
+
+```powershell
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound `
+  -F "from=Dev Tester <dev@example.com>" `
+  -F "to={tenantGuid}.{roadGuid}@notifications.example.local" `
+  -F "subject=Local road-level test" `
+  -F "text=This should create one road address" `
+  -F "SPF=pass" `
+  -F "dkim={@example.com : pass}"
+```
+
+### Windows Command Prompt (cmd)
+
+Tenant-level example:
+
+```cmd
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound ^
+  -F "from=Dev Tester <dev@example.com>" ^
+  -F "to=00000000-0000-0000-0000-3eca75185852@notifications.example.local" ^
+  -F "subject=Local tenant-level test" ^
+  -F "text=This should route to tenant processing" ^
+  -F "SPF=pass" ^
+  -F "dkim={@example.com : pass}"
+```
+
+Road-level example (`tenant.road`):
+
+```cmd
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound ^
+  -F "from=Dev Tester <dev@example.com>" ^
+  -F "to={tenantGuid}.{roadGuid}@notifications.example.local" ^
+  -F "subject=Local road-level test" ^
+  -F "text=This should create one road address" ^
+  -F "SPF=pass" ^
+  -F "dkim={@example.com : pass}"
+```
+
+Notes:
+- Use real tenant/road GUIDs from your local data.
+- Address creation requires a subdomain in the recipient domain (for example `notifications.*`).
+- In Development environment, webhook validator allows local testing while still capturing headers.
+
 ---
 
-**Status**: ✅ Production-Ready Implementation  
-**Branch**: `dev/willywil548/email_parsing`
+**Status**: Tenant/Road-routed inbound processing enabled
+

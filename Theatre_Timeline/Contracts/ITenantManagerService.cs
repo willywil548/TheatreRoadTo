@@ -1,3 +1,5 @@
+using Theatre_TimeLine.Models;
+
 namespace Theatre_TimeLine.Contracts
 {
     /// <summary>
@@ -36,5 +38,14 @@ namespace Theatre_TimeLine.Contracts
         /// </summary>
         /// <param name="guid">The tenant ID to remove.</param>
         void RemoveTenant(Guid guid);
+
+        /// <summary>
+        /// Appends an address to a road under a synchronized tenant write operation.
+        /// </summary>
+        /// <param name="tenantId">The tenant that owns the road.</param>
+        /// <param name="roadId">The road to append the address to.</param>
+        /// <param name="address">The address to append.</param>
+        /// <returns><see langword="true"/> when appended; otherwise <see langword="false"/>.</returns>
+        bool TryAppendAddressToRoad(Guid tenantId, Guid roadId, Address address);
     }
 }
