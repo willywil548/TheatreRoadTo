@@ -198,7 +198,9 @@ To trigger address creation, route through a domain with subdomain level (for ex
 
 For local testing, you can still post directly to the inbound API endpoint instead of using SendGrid delivery.
 
-Example:
+### Bash / Git Bash
+
+Tenant-level example:
 
 ```bash
 curl -X POST https://localhost:7070/api/sendgrid/inbound \
@@ -219,6 +221,58 @@ curl -X POST https://localhost:7070/api/sendgrid/inbound \
   -F "subject=Local road-level test" \
   -F "text=This should create one road address" \
   -F "SPF=pass" \
+  -F "dkim={@example.com : pass}"
+```
+
+### Windows PowerShell
+
+Tenant-level example:
+
+```powershell
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound `
+  -F "from=Dev Tester <dev@example.com>" `
+  -F "to=00000000-0000-0000-0000-3eca75185852@notifications.example.local" `
+  -F "subject=Local tenant-level test" `
+  -F "text=This should route to tenant processing" `
+  -F "SPF=pass" `
+  -F "dkim={@example.com : pass}"
+```
+
+Road-level example (`tenant.road`):
+
+```powershell
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound `
+  -F "from=Dev Tester <dev@example.com>" `
+  -F "to={tenantGuid}.{roadGuid}@notifications.example.local" `
+  -F "subject=Local road-level test" `
+  -F "text=This should create one road address" `
+  -F "SPF=pass" `
+  -F "dkim={@example.com : pass}"
+```
+
+### Windows Command Prompt (cmd)
+
+Tenant-level example:
+
+```cmd
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound ^
+  -F "from=Dev Tester <dev@example.com>" ^
+  -F "to=00000000-0000-0000-0000-3eca75185852@notifications.example.local" ^
+  -F "subject=Local tenant-level test" ^
+  -F "text=This should route to tenant processing" ^
+  -F "SPF=pass" ^
+  -F "dkim={@example.com : pass}"
+```
+
+Road-level example (`tenant.road`):
+
+```cmd
+curl.exe -X POST https://localhost:7070/api/sendgrid/inbound ^
+  -F "from=Dev Tester <dev@example.com>" ^
+  -F "to={tenantGuid}.{roadGuid}@notifications.example.local" ^
+  -F "subject=Local road-level test" ^
+  -F "text=This should create one road address" ^
+  -F "SPF=pass" ^
   -F "dkim={@example.com : pass}"
 ```
 

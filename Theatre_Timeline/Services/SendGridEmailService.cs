@@ -8,6 +8,15 @@ using Theatre_TimeLine.Models;
 namespace Theatre_TimeLine.Services
 {
     /// <summary>
+    /// Event args for a successfully ingested inbound email.
+    /// </summary>
+    /// <param name="TenantId">Tenant that received the email.</param>
+    public sealed class EmailIngestedEventArgs(Guid tenantId) : EventArgs
+    {
+        public Guid TenantId { get; } = tenantId;
+    }
+
+    /// <summary>
     /// Represents the result of attempting to get a stored email for a caller.
     /// </summary>
     /// <param name="Allowed">Whether the caller is authorized to read the requested email.</param>
@@ -34,6 +43,11 @@ namespace Theatre_TimeLine.Services
     /// </summary>
     public interface ISendGridEmailService
     {
+        /// <summary>
+        /// Raised when an inbound email is successfully ingested and persisted.
+        /// </summary>
+        event EventHandler<EmailIngestedEventArgs>? InboundEmailIngested;
+
         /// <summary>
         /// Validates, routes, and conditionally persists an inbound SendGrid email.
         /// </summary>
@@ -211,6 +225,8 @@ namespace Theatre_TimeLine.Services
     /// </summary>
     public partial class SendGridEmailService : ISendGridEmailService
     {
+        public event EventHandler<EmailIngestedEventArgs>? InboundEmailIngested;
+
         [GeneratedRegex(@"[\r\n\t\x00-\x1F\x7F]", RegexOptions.Compiled)]
         private static partial Regex LogSanitizationRegex();
 
@@ -275,6 +291,21 @@ namespace Theatre_TimeLine.Services
 
             _logger.LogInformation("Webhook validation passed. Headers captured: {HasHeaders}",
                 validationResult.Headers != null);
+
+            // Require a valid sender email identity; acknowledge but do not ingest if missing.
+            var fromEmail = email.GetFromEmail();
+            if (string.IsNullOrWhiteSpace(fromEmail))
+            {
+                _logger.LogWarning("Inbound email acknowledged but not saved: missing sender email in From field.");
+                return new InboundEmailProcessResult(
+                    IsValid: true,
+                    ValidationReason: "Missing sender email",
+                    Filename: null,
+                    From: null,
+                    Subject: email.Subject,
+                    SpamScore: email.GetSpamScoreValue(),
+                    Saved: false);
+            }
 
             // Second gate: resolve tenant (or tenant.road) from recipient local-part.
             var tenantResolution = ResolveTenantIdFromRecipients(email);
@@ -371,8 +402,8 @@ namespace Theatre_TimeLine.Services
 
             // Compose storage filename with timestamp + sender hint + random suffix.
             string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
-            string fromEmail = email.GetFromEmail()?.Replace("@", "_at_") ?? "unknown";
-            string sanitizedFrom = string.Join("_", fromEmail.Split(Path.GetInvalidFileNameChars()));
+            string sanitizedSender = fromEmail.Replace("@", "_at_");
+            string sanitizedFrom = string.Join("_", sanitizedSender.Split(Path.GetInvalidFileNameChars()));
             string filename = $"email_{timestamp}_{sanitizedFrom}_{Guid.NewGuid()}.enc";
             string filePath = Path.Combine(tenantEmailStoragePath, filename);
 
@@ -406,11 +437,13 @@ namespace Theatre_TimeLine.Services
 
             _logger.LogInformation("Encrypted email saved successfully for tenant {TenantId}", tenantId);
 
+            InboundEmailIngested?.Invoke(this, new EmailIngestedEventArgs(tenantId));
+
             return new InboundEmailProcessResult(
                 IsValid: true,
                 ValidationReason: null,
                 Filename: email.StoredAs,
-                From: email.GetFromEmail(),
+                From: fromEmail,
                 Subject: email.Subject,
                 SpamScore: email.GetSpamScoreValue(),
                 Saved: true);
