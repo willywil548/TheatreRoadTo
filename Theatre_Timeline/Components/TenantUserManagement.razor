@@ -143,13 +143,13 @@ else
                         <MudTh>Road</MudTh>
                         <MudTh Style="width: 120px;"></MudTh>
                     </HeaderContent>
-                    <RowTemplate>
-                        <MudTd>@context.Title</MudTd>
+                    <RowTemplate Context="road">
+                        <MudTd>@road.Title</MudTd>
                         <MudTd>
                             <MudButton Variant="Variant.Text"
                                        Size="Size.Small"
                                        StartIcon="@Icons.Material.Filled.GroupAdd"
-                                       OnClick="@(() => EnsureRoadGroup(context.RoadId))">
+                                       OnClick="@(() => EnsureRoadGroup(road.RoadId))">
                                 Set up
                             </MudButton>
                         </MudTd>
@@ -466,38 +466,5 @@ else
         public string Status { get; set; } = "Pending";
         public int Attempts { get; set; }
         public DateTime CreatedUtc { get; set; }
-    }
-
-    // Nested: list members and remove
-    public sealed partial class UserGroupMembers : ComponentBase
-    {
-        [Inject] private ISecurityGroupService SecurityGroupService { get; set; } = default!;
-        [Inject] private ISnackbar Snackbar { get; set; } = default!;
-        [Parameter] public string GroupName { get; set; } = string.Empty;
-        [Parameter] public EventCallback OnChanged { get; set; }
-
-        private IReadOnlyList<AppUser> _members = Array.Empty<AppUser>();
-
-        protected override async Task OnParametersSetAsync()
-        {
-            _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
-        }
-
-        public async Task RefreshAsync()
-        {
-            _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
-            await InvokeAsync(StateHasChanged);
-        }
-
-        private async Task Remove(AppUser user)
-        {
-            await SecurityGroupService.RemoveUserFromGroupAsync(user.Email, GroupName);
-            Snackbar.Add($"Removed {user.DisplayName ?? user.Email}", Severity.Info);
-            _members = await SecurityGroupService.GetGroupMembersAsync(GroupName);
-            StateHasChanged();
-
-            if (OnChanged.HasDelegate)
-                await OnChanged.InvokeAsync();
-        }
     }
 }
