@@ -297,12 +297,14 @@ else
     private enum EmailIngestionStatus
     {
         Success,
+        InProgress,
         Error
     }
 
     private enum EmailStatusFilter
     {
         All,
+        InProgress,
         Error,
         Success
     }
@@ -447,6 +449,27 @@ else
                 return;
             }
 
+            // Build a lookup from stored filename -> latest processing status so each email row
+            // reflects the asynchronous AI processing outcome rather than a hardcoded placeholder.
+            var processingResult = await SendGridEmailService.TryListProcessingStatusesForAccessAsync(_currentUser, _selectedTenant.TenantId);
+            var processingByStoredAs = new Dictionary<string, EmailProcessingStatusSummary>(StringComparer.OrdinalIgnoreCase);
+            if (processingResult.Allowed)
+            {
+                foreach (var status in processingResult.Statuses)
+                {
+                    if (string.IsNullOrWhiteSpace(status.StoredAs))
+                    {
+                        continue;
+                    }
+
+                    if (!processingByStoredAs.TryGetValue(status.StoredAs, out var existing) ||
+                        (status.UpdatedAt ?? DateTime.MinValue) > (existing.UpdatedAt ?? DateTime.MinValue))
+                    {
+                        processingByStoredAs[status.StoredAs] = status;
+                    }
+                }
+            }
+
             var sorted = result.Emails.OrderByDescending(e => e.Created).ToList();
             var items = new List<TenantEmailListItem>(sorted.Count);
 
@@ -465,8 +488,24 @@ else
                 var title = subject;
                 var subtitle = $"From {from} • {target} • Received {summary.Created.ToLocalTime():g}";
 
-                var status = EmailIngestionStatus.Error;
-                const string statusMessage = "Ingestion error: AI processing is not configured yet.";
+                var status = EmailIngestionStatus.InProgress;
+                var statusMessage = "Ingestion saved. Processing is queued.";
+
+                if (processingByStoredAs.TryGetValue(summary.Filename, out var processingStatus))
+                {
+                    // Map processing states to UI states so queued/processing are not shown as errors.
+                    status = processingStatus.Status.ToLowerInvariant() switch
+                    {
+                        "completed" => EmailIngestionStatus.Success,
+                        "queued" => EmailIngestionStatus.InProgress,
+                        "processing" => EmailIngestionStatus.InProgress,
+                        "retryable-failure" => EmailIngestionStatus.InProgress,
+                        "failed" => EmailIngestionStatus.Error,
+                        _ => EmailIngestionStatus.InProgress
+                    };
+
+                    statusMessage = $"Processing {processingStatus.Status} (attempt {processingStatus.Attempt}, created {processingStatus.CreatedCount}, dropped {processingStatus.DroppedCount}).";
+                }
 
                 items.Add(new TenantEmailListItem(summary, title, subtitle, target, status, statusMessage, email));
             }
@@ -533,6 +572,7 @@ else
     {
         _filteredTenantEmailItems = _emailStatusFilter switch
         {
+            EmailStatusFilter.InProgress => _tenantEmailItems.Where(e => e.Status == EmailIngestionStatus.InProgress).ToList(),
             EmailStatusFilter.Error => _tenantEmailItems.Where(e => e.Status == EmailIngestionStatus.Error).ToList(),
             EmailStatusFilter.Success => _tenantEmailItems.Where(e => e.Status == EmailIngestionStatus.Success).ToList(),
             _ => _tenantEmailItems.ToList()
@@ -549,13 +589,28 @@ else
     }
 
     private static string GetStatusIcon(EmailIngestionStatus status) =>
-        status == EmailIngestionStatus.Success ? Icons.Material.Filled.MarkEmailRead : Icons.Material.Filled.Error;
+        status switch
+        {
+            EmailIngestionStatus.Success => Icons.Material.Filled.MarkEmailRead,
+            EmailIngestionStatus.InProgress => Icons.Material.Filled.Pending,
+            _ => Icons.Material.Filled.Error
+        };
 
     private static Color GetStatusColor(EmailIngestionStatus status) =>
-        status == EmailIngestionStatus.Success ? Color.Success : Color.Error;
+        status switch
+        {
+            EmailIngestionStatus.Success => Color.Success,
+            EmailIngestionStatus.InProgress => Color.Info,
+            _ => Color.Error
+        };
 
     private static string GetStatusLabel(EmailIngestionStatus status) =>
-        status == EmailIngestionStatus.Success ? "Success" : "Error";
+        status switch
+        {
+            EmailIngestionStatus.Success => "Success",
+            EmailIngestionStatus.InProgress => "In Progress",
+            _ => "Error"
+        };
 
     private string BuildTargetLabel(SendGridInboundEmail? email)
     {

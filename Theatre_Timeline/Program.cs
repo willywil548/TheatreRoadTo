@@ -203,7 +203,7 @@ builder.Services.AddSingleton<InboundEmailProcessingQueue>();
 builder.Services.AddSingleton<IInboundEmailProcessingQueue>(serviceProvider => serviceProvider.GetRequiredService<InboundEmailProcessingQueue>());
 builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<InboundEmailProcessingQueue>());
 builder.Services.AddScoped<IInboundEmailProcessor, InboundEmailProcessor>();
-builder.Services.AddHttpClient<IInboundEmailAiExtractionService, HttpInboundEmailAiExtractionService>();
+builder.Services.AddSingleton<IInboundEmailAiExtractionService, AzureOpenAiInboundEmailAiExtractionService>();
 builder.Services.AddSingleton<ISendGridEmailService, SendGridEmailService>();
 
 // Add user management service (Graph if configured; stub otherwise)

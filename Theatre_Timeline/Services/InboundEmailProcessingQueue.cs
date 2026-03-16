@@ -1,9 +1,12 @@
+using System.Globalization;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
+using Azure;
+using Azure.AI.OpenAI;
+using OpenAI.Chat;
 using Theatre_TimeLine.Contracts;
 using Theatre_TimeLine.Models;
 
@@ -67,10 +70,31 @@ namespace Theatre_TimeLine.Services
         /// Extracts structured address items from an inbound email.
         /// </summary>
         /// <param name="email">The inbound email payload.</param>
+        /// <param name="context">Routing and timeline context for extraction decisions.</param>
         /// <param name="cancellationToken">A token to cancel extraction.</param>
         /// <returns>A structured extraction response.</returns>
-        Task<AiExtractionResponse> ExtractAsync(SendGridInboundEmail email, CancellationToken cancellationToken = default);
+        Task<AiExtractionResponse> ExtractAsync(
+            SendGridInboundEmail email,
+            AiExtractionContext context,
+            CancellationToken cancellationToken = default);
     }
+
+    /// <summary>
+    /// Represents routing and timeline context supplied to AI extraction.
+    /// </summary>
+    /// <param name="TenantId">The target tenant identifier.</param>
+    /// <param name="RoutingMode">The routing mode used for address creation.</param>
+    /// <param name="RoadId">The explicit target road identifier when route is road-level.</param>
+    /// <param name="TargetRoadCount">How many roads will receive created addresses.</param>
+    /// <param name="RoadWindowStart">Earliest start date among target roads, when available.</param>
+    /// <param name="RoadWindowEnd">Latest end date among target roads, when available.</param>
+    public sealed record AiExtractionContext(
+        Guid TenantId,
+        InboundEmailRoutingMode RoutingMode,
+        Guid? RoadId,
+        int TargetRoadCount,
+        DateTime? RoadWindowStart,
+        DateTime? RoadWindowEnd);
 
     /// <summary>
     /// Represents an AI-request error that can be retried safely.
@@ -102,6 +126,8 @@ namespace Theatre_TimeLine.Services
     /// </summary>
     public sealed class InboundEmailProcessingQueue : BackgroundService, IInboundEmailProcessingQueue
     {
+        private const int MaxRetryAttempts = 3;
+
         // In-memory channel keeps ingestion and processing decoupled without external queue infrastructure.
         private readonly Channel<InboundEmailProcessingRequest> _channel = Channel.CreateUnbounded<InboundEmailProcessingRequest>();
         private readonly IServiceScopeFactory _scopeFactory;
@@ -132,6 +158,9 @@ namespace Theatre_TimeLine.Services
         /// <param name="stoppingToken">Token used to stop background processing.</param>
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // Recover any durable queued/processing artifacts so app restarts do not drop work.
+            await RecoverPendingRequestsAsync(stoppingToken);
+
             // Continuously drain queued requests until shutdown.
             await foreach (var request in _channel.Reader.ReadAllAsync(stoppingToken))
             {
@@ -144,7 +173,7 @@ namespace Theatre_TimeLine.Services
                     continue;
                 }
 
-                if (!result.Retryable || request.Attempt >= 3)
+                if (!result.Retryable || request.Attempt >= MaxRetryAttempts)
                 {
                     _logger.LogWarning(
                         "Inbound email processing permanently failed. EmailId: {EmailId}, Attempt: {Attempt}, Reason: {Reason}",
@@ -171,6 +200,200 @@ namespace Theatre_TimeLine.Services
                 }, stoppingToken);
             }
         }
+
+        /// <summary>
+        /// Rebuilds in-memory queue entries from persisted processing artifacts after restart.
+        /// </summary>
+        /// <param name="cancellationToken">Token to cancel recovery work.</param>
+        /// <returns>A task that completes when recovery scan finishes.</returns>
+        private async Task RecoverPendingRequestsAsync(CancellationToken cancellationToken)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var tenantManagerService = scope.ServiceProvider.GetRequiredService<ITenantManagerService>();
+
+            int recoveredCount = 0;
+
+            foreach (var tenant in tenantManagerService.GetTenants())
+            {
+                var tenantEmailStoragePath = Path.Combine(tenantManagerService.GetTenantRootPath(tenant.TenantId), "emails");
+                if (!Directory.Exists(tenantEmailStoragePath))
+                {
+                    continue;
+                }
+
+                foreach (var processingDir in Directory.GetDirectories(tenantEmailStoragePath))
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    var folderName = Path.GetFileName(processingDir);
+                    if (!Guid.TryParseExact(folderName, "N", out var emailId))
+                    {
+                        // Ignore legacy email files and non-processing directories.
+                        continue;
+                    }
+
+                    var statePath = Path.Combine(processingDir, "processing", "state.json");
+                    var referencePath = Path.Combine(processingDir, "raw", "reference.json");
+
+                    if (!File.Exists(statePath) || !File.Exists(referencePath))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadRecoveryState(statePath, out var recoveryState) ||
+                        !ShouldRecover(recoveryState.Status, recoveryState.Attempt))
+                    {
+                        continue;
+                    }
+
+                    if (!TryBuildRecoveryRequest(tenant.TenantId, emailId, referencePath, recoveryState, out var request))
+                    {
+                        continue;
+                    }
+
+                    await QueueAsync(request, cancellationToken);
+                    recoveredCount++;
+                }
+            }
+
+            _logger.LogInformation("Recovered {RecoveredCount} inbound email processing request(s) from disk artifacts.", recoveredCount);
+        }
+
+        /// <summary>
+        /// Reads state metadata needed for restart recovery.
+        /// </summary>
+        /// <param name="statePath">Path to state.json.</param>
+        /// <param name="recoveryState">Parsed state values.</param>
+        /// <returns><see langword="true"/> when parsed successfully; otherwise <see langword="false"/>.</returns>
+        private static bool TryReadRecoveryState(string statePath, out RecoveryState recoveryState)
+        {
+            recoveryState = new RecoveryState("unknown", 0);
+
+            try
+            {
+                using var stream = File.OpenRead(statePath);
+                using var document = JsonDocument.Parse(stream);
+                var root = document.RootElement;
+
+                var status = root.TryGetProperty("status", out var statusNode) && statusNode.ValueKind == JsonValueKind.String
+                    ? statusNode.GetString() ?? "unknown"
+                    : "unknown";
+
+                var attempt = root.TryGetProperty("attempt", out var attemptNode) && attemptNode.TryGetInt32(out var parsedAttempt)
+                    ? parsedAttempt
+                    : 0;
+
+                recoveryState = new RecoveryState(status, attempt);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Determines whether a state should be re-queued after restart.
+        /// </summary>
+        /// <param name="status">Persisted state value.</param>
+        /// <param name="attempt">Persisted attempt count.</param>
+        /// <returns><see langword="true"/> when the item should be recovered.</returns>
+        private static bool ShouldRecover(string status, int attempt)
+        {
+            if (string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (string.Equals(status, "retryable-failure", StringComparison.OrdinalIgnoreCase))
+            {
+                return attempt < MaxRetryAttempts;
+            }
+
+            return string.Equals(status, "queued", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, "processing", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Builds a queued request from persisted reference metadata.
+        /// </summary>
+        /// <param name="tenantId">Tenant identifier.</param>
+        /// <param name="emailId">Processing identifier.</param>
+        /// <param name="referencePath">Path to reference.json.</param>
+        /// <param name="recoveryState">Persisted recovery state values.</param>
+        /// <param name="request">Recovery request payload when successful.</param>
+        /// <returns><see langword="true"/> when request was built; otherwise <see langword="false"/>.</returns>
+        private static bool TryBuildRecoveryRequest(
+            Guid tenantId,
+            Guid emailId,
+            string referencePath,
+            RecoveryState recoveryState,
+            out InboundEmailProcessingRequest request)
+        {
+            request = default!;
+
+            try
+            {
+                using var stream = File.OpenRead(referencePath);
+                using var document = JsonDocument.Parse(stream);
+                var root = document.RootElement;
+
+                var storedAs = root.TryGetProperty("storedAs", out var storedAsNode) && storedAsNode.ValueKind == JsonValueKind.String
+                    ? storedAsNode.GetString()
+                    : null;
+
+                if (string.IsNullOrWhiteSpace(storedAs))
+                {
+                    return false;
+                }
+
+                Guid? roadId = null;
+                if (root.TryGetProperty("routeRoadId", out var roadIdNode) && roadIdNode.ValueKind == JsonValueKind.String)
+                {
+                    var rawRoadId = roadIdNode.GetString();
+                    if (Guid.TryParse(rawRoadId, out var parsedRoadId))
+                    {
+                        roadId = parsedRoadId;
+                    }
+                }
+
+                var hasSubdomain = root.TryGetProperty("hasSubdomain", out var subdomainNode) &&
+                                   subdomainNode.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+                                   subdomainNode.GetBoolean();
+
+                var routingMode = roadId.HasValue ? InboundEmailRoutingMode.Road : InboundEmailRoutingMode.Tenant;
+
+                var attempt = string.Equals(recoveryState.Status, "retryable-failure", StringComparison.OrdinalIgnoreCase)
+                    ? Math.Min(MaxRetryAttempts, recoveryState.Attempt + 1)
+                    : Math.Max(1, recoveryState.Attempt);
+
+                request = new InboundEmailProcessingRequest(
+                    TenantId: tenantId,
+                    EmailId: emailId,
+                    StoredAs: storedAs,
+                    RoutingMode: routingMode,
+                    RoadId: roadId,
+                    HasSubdomain: hasSubdomain,
+                    Attempt: attempt);
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Represents minimal persisted state values used for queue recovery.
+        /// </summary>
+        /// <param name="Status">Persisted processing state string.</param>
+        /// <param name="Attempt">Persisted attempt number.</param>
+        private sealed record RecoveryState(string Status, int Attempt);
     }
 
     /// <summary>
@@ -285,7 +508,6 @@ namespace Theatre_TimeLine.Services
                     return new InboundEmailProcessingResult(false, false, "Stored email missing");
                 }
 
-                var extraction = await _aiExtractionService.ExtractAsync(email, cancellationToken);
                 var tenant = _tenantManagerService.GetTenant(request.TenantId);
                 if (tenant == null)
                 {
@@ -296,11 +518,29 @@ namespace Theatre_TimeLine.Services
                     ? new[] { request.RoadId.Value }
                     : tenant.Roads.Select(road => road.RoadId).ToArray();
 
+                var targetRoads = tenant.Roads
+                    .Where(road => roadIds.Contains(road.RoadId))
+                    .ToList();
+
+                var startCandidates = targetRoads.Where(road => road.StartTime.HasValue).Select(road => road.StartTime!.Value).ToList();
+                var endCandidates = targetRoads.Where(road => road.EndTime.HasValue).Select(road => road.EndTime!.Value).ToList();
+
+                var extractionContext = new AiExtractionContext(
+                    TenantId: request.TenantId,
+                    RoutingMode: request.RoutingMode,
+                    RoadId: request.RoadId,
+                    TargetRoadCount: targetRoads.Count,
+                    RoadWindowStart: startCandidates.Count > 0 ? startCandidates.Min() : null,
+                    RoadWindowEnd: endCandidates.Count > 0 ? endCandidates.Max() : null);
+
+                var extraction = await _aiExtractionService.ExtractAsync(email, extractionContext, cancellationToken);
+                var extractionItems = ExpandExtractionItems(extraction.Items, email);
+
                 // Track successes and dropped items independently to support partial-completion behavior.
                 var created = new List<object>();
                 var dropped = new List<object>();
 
-                foreach (var item in extraction.Items)
+                foreach (var item in extractionItems)
                 {
                     var candidate = await BuildAddressCandidateAsync(item, email, cancellationToken);
                     if (!candidate.IsValid || candidate.Address == null)
@@ -388,6 +628,11 @@ namespace Theatre_TimeLine.Services
                 ? $"Inbound email from {sourceEmail.GetFromDisplayName() ?? sourceEmail.GetFromEmail() ?? "unknown sender"}"
                 : item.Description.Trim();
 
+            // Prefer model-provided location when present; otherwise use current time.
+            // Reminder-like due-date items are intentionally scheduled a couple days earlier.
+            var isReminderDueDateItem = IsReminderDueDateItem(item);
+            var resolvedLocation = ResolveItemLocation(item.Location, isReminderDueDateItem);
+
             if (requestedType == AddressType.Video)
             {
                 var url = item.Video?.Url ?? item.Content;
@@ -411,7 +656,7 @@ namespace Theatre_TimeLine.Services
 
                     return new AddressBuildCandidate(true, new Address
                     {
-                        Location = DateTime.UtcNow,
+                        Location = resolvedLocation,
                         Title = title,
                         Description = description,
                         Content = $"https://www.youtube.com/watch?v={videoId}",
@@ -452,7 +697,7 @@ namespace Theatre_TimeLine.Services
 
                 var pollAddress = new PollAddress
                 {
-                    Location = DateTime.UtcNow,
+                    Location = resolvedLocation,
                     Title = title,
                     Description = description,
                     DelayRelease = item.DelayRelease,
@@ -480,7 +725,7 @@ namespace Theatre_TimeLine.Services
 
             return new AddressBuildCandidate(true, new Address
             {
-                Location = DateTime.UtcNow,
+                Location = resolvedLocation,
                 Title = title,
                 Description = description,
                 Content = content,
@@ -488,6 +733,166 @@ namespace Theatre_TimeLine.Services
                 DelayRelease = item.DelayRelease,
                 Tags = NormalizeTags(item.Tags)
             }, null);
+        }
+
+        /// <summary>
+        /// Expands AI extraction output into actionable items when the model under-extracts.
+        /// </summary>
+        /// <param name="items">Items returned by the AI extractor.</param>
+        /// <param name="sourceEmail">Source inbound email used for fallback parsing.</param>
+        /// <returns>A normalized list of extraction items ready for address creation.</returns>
+        private static IReadOnlyList<AiExtractionItem> ExpandExtractionItems(IReadOnlyList<AiExtractionItem> items, SendGridInboundEmail sourceEmail)
+        {
+            var expanded = new List<AiExtractionItem>(items ?? []);
+
+            // Preserve model output when it already produced multiple actionable items.
+            if (expanded.Count > 1)
+            {
+                return expanded;
+            }
+
+            var body = sourceEmail.GetBodyContent() ?? sourceEmail.GetTextBody() ?? sourceEmail.GetHtmlBody() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return expanded;
+            }
+
+            var seenContent = new HashSet<string>(expanded
+                .Select(extractedItem => extractedItem.Content)
+                .Where(content => !string.IsNullOrWhiteSpace(content))
+                .Select(content => content!.Trim()), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!TryParseKeyDetailLine(line, out var label, out var detail))
+                {
+                    continue;
+                }
+
+                var detailContent = $"{label}: {detail}";
+                if (!seenContent.Add(detailContent))
+                {
+                    continue;
+                }
+
+                // Keep the original line (including icons/symbols) in content for display fidelity.
+                var rawContent = line.Trim();
+
+                expanded.Add(new AiExtractionItem
+                {
+                    AddressType = "Notification",
+                    Confidence = 0.7,
+                    Title = string.IsNullOrWhiteSpace(sourceEmail.Subject)
+                        ? label
+                        : $"{sourceEmail.Subject} - {label}",
+                    Description = $"Inbound detail: {label}",
+                    Content = rawContent,
+                    Location = TryExtractReminderIsoDate(label, detail),
+                    DelayRelease = false,
+                    Tags = [label]
+                });
+            }
+
+            // Ensure at least one item exists if AI returned nothing parseable.
+            if (expanded.Count == 0)
+            {
+                expanded.Add(new AiExtractionItem
+                {
+                    AddressType = "Notification",
+                    Confidence = 0.5,
+                    Title = string.IsNullOrWhiteSpace(sourceEmail.Subject) ? "Inbound Email" : sourceEmail.Subject,
+                    Description = $"Inbound email from {sourceEmail.GetFromDisplayName() ?? sourceEmail.GetFromEmail() ?? "unknown sender"}",
+                    Content = body.Length > 500 ? body[..500] : body,
+                    DelayRelease = false,
+                    Tags = ["Notification"]
+                });
+            }
+
+            return expanded;
+        }
+
+        /// <summary>
+        /// Attempts to parse a key-value detail line from inbound email body content.
+        /// </summary>
+        /// <param name="line">The raw line text.</param>
+        /// <param name="label">Parsed label segment before the colon.</param>
+        /// <param name="detail">Parsed detail segment after the colon.</param>
+        /// <returns><see langword="true"/> when the line looks actionable; otherwise <see langword="false"/>.</returns>
+        private static bool TryParseKeyDetailLine(string line, out string label, out string detail)
+        {
+            label = string.Empty;
+            detail = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return false;
+            }
+
+            var colonIndex = line.IndexOf(':');
+            if (colonIndex <= 0 || colonIndex >= line.Length - 1)
+            {
+                return false;
+            }
+
+            // Remove common bullet/symbol prefixes from labels.
+            var rawLabel = Regex.Replace(line[..colonIndex].Trim(), "^[^\\p{L}\\p{N}]+", string.Empty);
+            var rawDetail = line[(colonIndex + 1)..].Trim();
+
+            if (string.IsNullOrWhiteSpace(rawLabel) || string.IsNullOrWhiteSpace(rawDetail))
+            {
+                return false;
+            }
+
+            // Keep only known actionable label families to avoid over-fragmenting prose lines.
+            var knownLabels = new[]
+            {
+                "due date",
+                "where to pay",
+                "late fee",
+                "action needed",
+                "discount",
+                "pay-in-full"
+            };
+
+            if (!knownLabels.Any(known => rawLabel.Contains(known, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            label = rawLabel;
+            detail = rawDetail;
+            return true;
+        }
+
+        /// <summary>
+        /// Attempts to infer an ISO-8601 reminder date/time from natural-language detail text.
+        /// Reminders are intentionally scheduled two days before the parsed due/deadline date.
+        /// </summary>
+        /// <param name="detail">Detail text that may contain a date.</param>
+        /// <returns>ISO-8601 date/time when parseable; otherwise <see langword="null"/>.</returns>
+        private static string? TryExtractReminderIsoDate(string label, string detail)
+        {
+            if (string.IsNullOrWhiteSpace(detail))
+            {
+                return null;
+            }
+
+            var isDueDateLabel = label.Contains("due", StringComparison.OrdinalIgnoreCase) ||
+                                 label.Contains("deadline", StringComparison.OrdinalIgnoreCase);
+
+            var reminderLeadDays = isDueDateLabel ? 2 : 0;
+
+            if (DateTimeOffset.TryParse(detail, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var parsedOffset))
+            {
+                return parsedOffset.AddDays(-reminderLeadDays).ToString("O");
+            }
+
+            if (DateTime.TryParse(detail, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var parsedDateTime))
+            {
+                return parsedDateTime.AddDays(-reminderLeadDays).ToString("O");
+            }
+
+            return null;
         }
 
         private async Task<SendGridInboundEmail?> ReadStoredEmailAsync(InboundEmailProcessingRequest request, CancellationToken cancellationToken)
@@ -554,6 +959,64 @@ namespace Theatre_TimeLine.Services
                 .ToList();
         }
 
+        /// <summary>
+        /// Resolves an extracted location string into a timeline location value.
+        /// </summary>
+        /// <param name="rawLocation">The model-provided date/time string.</param>
+        /// <returns>The resolved date/time, or current UTC time when missing/invalid.</returns>
+        private static DateTime ResolveItemLocation(string? rawLocation, bool applyReminderLeadTime)
+        {
+            if (string.IsNullOrWhiteSpace(rawLocation))
+            {
+                return DateTime.UtcNow;
+            }
+
+            var leadDays = applyReminderLeadTime ? 2 : 0;
+
+            // Date-only values should map directly to that calendar day at midnight.
+            if (DateOnly.TryParse(rawLocation, out var parsedDateOnly))
+            {
+                return parsedDateOnly.ToDateTime(TimeOnly.MinValue).AddDays(-leadDays);
+            }
+
+            // Preserve the wall-clock time from the model to avoid timezone-shifted dates
+            // (for example 2026-03-22T00:00:00Z appearing as previous day local time).
+            if (DateTimeOffset.TryParse(rawLocation, out var parsedOffset))
+            {
+                return parsedOffset.DateTime.AddDays(-leadDays);
+            }
+
+            // Fallback for date-only and non-offset values.
+            if (DateTime.TryParse(rawLocation, out var parsedDateTime))
+            {
+                return parsedDateTime.AddDays(-leadDays);
+            }
+
+            return DateTime.UtcNow;
+        }
+
+        /// <summary>
+        /// Determines whether an extracted item should be treated as a due-date reminder.
+        /// </summary>
+        /// <param name="item">The extracted item.</param>
+        /// <returns><see langword="true"/> when reminder lead-time should be applied.</returns>
+        private static bool IsReminderDueDateItem(AiExtractionItem item)
+        {
+            var tags = item.Tags ?? [];
+            if (tags.Any(tag =>
+                tag.Contains("due", StringComparison.OrdinalIgnoreCase) ||
+                tag.Contains("deadline", StringComparison.OrdinalIgnoreCase) ||
+                tag.Contains("reminder", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            var combinedText = $"{item.Description} {item.Content}";
+            return combinedText.Contains("due date", StringComparison.OrdinalIgnoreCase) ||
+                   combinedText.Contains("deadline", StringComparison.OrdinalIgnoreCase) ||
+                   combinedText.Contains("reminder", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static async Task WriteJsonFileAsync<T>(string path, T payload, CancellationToken cancellationToken)
         {
             await using var stream = File.Create(path);
@@ -570,104 +1033,166 @@ namespace Theatre_TimeLine.Services
     }
 
     /// <summary>
-    /// Calls the configured AI HTTP endpoint to convert inbound emails into typed extraction items.
+    /// Calls Azure OpenAI to convert inbound emails into typed extraction items.
     /// </summary>
-    public sealed class HttpInboundEmailAiExtractionService : IInboundEmailAiExtractionService
+    public sealed class AzureOpenAiInboundEmailAiExtractionService : IInboundEmailAiExtractionService
     {
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNameCaseInsensitive = true
         };
 
-        private readonly HttpClient _httpClient;
+        private readonly ChatClient _chatClient;
         private readonly IConfiguration _configuration;
-        private readonly ILogger<HttpInboundEmailAiExtractionService> _logger;
+        private readonly ILogger<AzureOpenAiInboundEmailAiExtractionService> _logger;
+        private readonly IReadOnlyList<string> _systemContextMessages;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="HttpInboundEmailAiExtractionService"/> class.
+        /// Initializes a new instance of the <see cref="AzureOpenAiInboundEmailAiExtractionService"/> class.
         /// </summary>
-        /// <param name="httpClient">The HTTP client used to call the AI endpoint.</param>
-        /// <param name="configuration">Application configuration for endpoint and key values.</param>
+        /// <param name="configuration">Application configuration for Azure OpenAI endpoint, key, and deployment.</param>
         /// <param name="logger">The logger instance.</param>
-        public HttpInboundEmailAiExtractionService(
-            HttpClient httpClient,
+        public AzureOpenAiInboundEmailAiExtractionService(
             IConfiguration configuration,
-            ILogger<HttpInboundEmailAiExtractionService> logger)
+            ILogger<AzureOpenAiInboundEmailAiExtractionService> logger)
         {
-            _httpClient = httpClient;
             _configuration = configuration;
             _logger = logger;
-        }
 
-        /// <inheritdoc />
-        public async Task<AiExtractionResponse> ExtractAsync(SendGridInboundEmail email, CancellationToken cancellationToken = default)
-        {
-            var url = _configuration["AI:API:URL"];
-            var key = _configuration["AI:API:Key"];
+            // Keep the current configuration section and add a deployment key for Azure OpenAI.
+            var endpoint = _configuration["AI:API:URL"];
+            var apiKey = _configuration["AI:API:Key"];
+            var deploymentName = _configuration["AI:OpenAI:DeploymentName"] ?? "gpt-4.1-mini";
 
-            if (string.IsNullOrWhiteSpace(url))
+            if (string.IsNullOrWhiteSpace(endpoint))
             {
                 throw new InvalidOperationException("AI:API:URL is not configured.");
             }
 
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new InvalidOperationException("AI:API:Key is not configured.");
+            }
+
+            var client = new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey));
+            _chatClient = client.GetChatClient(deploymentName);
+
+            // Load simple system-context messages from settings so behavior can be tuned
+            // without code changes.
+            _systemContextMessages = BuildSystemContextMessages();
+        }
+
+        /// <inheritdoc />
+        public async Task<AiExtractionResponse> ExtractAsync(
+            SendGridInboundEmail email,
+            AiExtractionContext context,
+            CancellationToken cancellationToken = default)
+        {
             var bodyContent = email.GetBodyContent() ?? email.GetTextBody() ?? email.GetHtmlBody() ?? string.Empty;
-            var payload = new
+
+            // Ask the model for strict JSON and include configurable context messages.
+            var messages = new List<ChatMessage>();
+
+            foreach (var contextMessage in _systemContextMessages)
+            {
+                messages.Add(new SystemChatMessage(contextMessage));
+            }
+
+            messages.Add(new UserChatMessage(BuildExtractionPrompt(email, bodyContent, context)));
+
+            try
+            {
+                var completion = await _chatClient.CompleteChatAsync(messages, cancellationToken: cancellationToken);
+                var content = string.Concat(completion.Value.Content.Select(part => part.Text));
+                return ParseResponse(content);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 429 || ex.Status >= 500)
+            {
+                throw new RetryableAiRequestException($"Azure OpenAI returned retryable status code {ex.Status}.", ex);
+            }
+            catch (TaskCanceledException ex)
+            {
+                throw new RetryableAiRequestException("Azure OpenAI request timed out.", ex);
+            }
+            catch (RequestFailedException ex)
+            {
+                _logger.LogWarning(ex, "Azure OpenAI returned non-retryable status code {StatusCode}", ex.Status);
+                return new AiExtractionResponse();
+            }
+        }
+
+        /// <summary>
+        /// Builds ordered system-context messages from configuration with safe defaults.
+        /// </summary>
+        /// <returns>System messages used to guide extraction behavior.</returns>
+        private IReadOnlyList<string> BuildSystemContextMessages()
+        {
+            var messages = new List<string>();
+
+            // First message defines role and output contract.
+            messages.Add(_configuration["AI:OpenAI:SystemMessage"]
+                ?? "You convert inbound emails into JSON with shape {\"items\":[{\"addressType\":\"Notification|Survey|Video\",\"confidence\":0.0,\"title\":\"\",\"description\":\"\",\"content\":\"\",\"location\":\"ISO-8601 date time\",\"delayRelease\":false,\"tags\":[\"\"],\"poll\":{\"question\":\"\",\"pollType\":\"YesNo|MultipleChoice\",\"options\":[\"\"]},\"video\":{\"url\":\"\",\"videoId\":\"\"}}]}. Return JSON only.");
+
+            // Optional simple messages let configuration inject business rules without code edits.
+            var configuredMessages = _configuration
+                .GetSection("AI:OpenAI:ContextMessages")
+                .GetChildren()
+                .Select(child => child.Value)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!.Trim())
+                .ToList();
+
+            if (configuredMessages.Count > 0)
+            {
+                messages.AddRange(configuredMessages);
+            }
+            else
+            {
+                // Safe defaults aligned with current product rules.
+                messages.Add("Only YouTube links should be classified as Video. Non-YouTube links must be Notification.");
+                messages.Add("Use Survey for poll-style content. Use Notification when unsure.");
+                messages.Add("If a specific date/time is present in the email, include it in item.location using ISO-8601 format.");
+                messages.Add("Preserve meaningful symbols and emojis from the source email in item.content when possible.");
+                messages.Add("When a due date or deadline is referenced for a reminder, set item.location about two days before that due date.");
+                messages.Add("Return concise, non-duplicated items and preserve factual email content.");
+            }
+
+            return messages;
+        }
+
+        /// <summary>
+        /// Builds the user prompt payload sent to Azure OpenAI.
+        /// </summary>
+        /// <param name="email">The inbound email payload.</param>
+        /// <param name="bodyContent">The normalized body content.</param>
+        /// <param name="context">Routing and road timeline context.</param>
+        /// <returns>The prompt string for structured extraction.</returns>
+        private static string BuildExtractionPrompt(SendGridInboundEmail email, string bodyContent, AiExtractionContext context)
+        {
+            var modelPayload = new
             {
                 from = email.GetFromEmail(),
                 fromDisplayName = email.GetFromDisplayName(),
                 to = email.GetToEmail(),
                 subject = email.Subject,
+                receivedAt = email.ReceivedAt,
                 content = bodyContent,
                 rawEmail = email.RawEmail,
                 dkim = email.Dkim,
                 spf = email.Spf,
-                spamScore = email.GetSpamScoreValue()
+                spamScore = email.GetSpamScoreValue(),
+                context = new
+                {
+                    tenantId = context.TenantId,
+                    routingMode = context.RoutingMode.ToString(),
+                    roadId = context.RoadId,
+                    targetRoadCount = context.TargetRoadCount,
+                    roadWindowStart = context.RoadWindowStart,
+                    roadWindowEnd = context.RoadWindowEnd
+                }
             };
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, url)
-            {
-                // Send both raw MIME and parsed fields so the AI backend can choose best extraction source.
-                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
-            };
-
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            if (!string.IsNullOrWhiteSpace(key))
-            {
-                request.Headers.TryAddWithoutValidation("api-key", key);
-                request.Headers.TryAddWithoutValidation("x-api-key", key);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            }
-
-            HttpResponseMessage response;
-            try
-            {
-                response = await _httpClient.SendAsync(request, cancellationToken);
-            }
-            catch (HttpRequestException ex)
-            {
-                throw new RetryableAiRequestException("AI service request failed due to network issue.", ex);
-            }
-            catch (TaskCanceledException ex)
-            {
-                throw new RetryableAiRequestException("AI service request timed out.", ex);
-            }
-
-            if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
-            {
-                throw new RetryableAiRequestException($"AI service returned retryable status code {(int)response.StatusCode}.");
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var nonSuccess = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogWarning("AI service returned non-success status {StatusCode}: {Body}", response.StatusCode, nonSuccess);
-
-                // Non-retryable failures produce an empty extraction to allow graceful partial pipeline completion.
-                return new AiExtractionResponse();
-            }
-
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            return ParseResponse(responseBody);
+            return JsonSerializer.Serialize(modelPayload);
         }
 
         private static AiExtractionResponse ParseResponse(string responseBody)
@@ -677,13 +1202,24 @@ namespace Theatre_TimeLine.Services
                 return new AiExtractionResponse();
             }
 
+            // Azure OpenAI may return fenced JSON (```json ... ```). Normalize first so
+            // direct deserialization and DOM parsing can succeed consistently.
+            var normalizedBody = NormalizeJsonPayload(responseBody);
+
             try
             {
                 // Preferred format: direct { items: [...] } JSON payload.
-                var direct = JsonSerializer.Deserialize<AiExtractionResponse>(responseBody, JsonOptions);
+                var direct = JsonSerializer.Deserialize<AiExtractionResponse>(normalizedBody, JsonOptions);
                 if (direct?.Items?.Count > 0)
                 {
                     return direct;
+                }
+
+                // Some model responses may return the item array directly.
+                var directItems = JsonSerializer.Deserialize<List<AiExtractionItem>>(normalizedBody, JsonOptions);
+                if (directItems?.Count > 0)
+                {
+                    return new AiExtractionResponse { Items = directItems };
                 }
             }
             catch (JsonException)
@@ -692,7 +1228,7 @@ namespace Theatre_TimeLine.Services
 
             try
             {
-                using var doc = JsonDocument.Parse(responseBody);
+                using var doc = JsonDocument.Parse(normalizedBody);
                 var root = doc.RootElement;
 
                 if (root.TryGetProperty("items", out var directItems))
@@ -722,6 +1258,57 @@ namespace Theatre_TimeLine.Services
             }
 
             return new AiExtractionResponse();
+        }
+
+        /// <summary>
+        /// Normalizes model output into a likely JSON payload for parsing.
+        /// </summary>
+        /// <param name="value">Raw model output text.</param>
+        /// <returns>A cleaned payload intended for JSON deserialization.</returns>
+        private static string NormalizeJsonPayload(string value)
+        {
+            var cleaned = CleanupFencedJson(value).Trim();
+            if (string.IsNullOrWhiteSpace(cleaned))
+            {
+                return string.Empty;
+            }
+
+            // If the model added commentary text, try extracting the first JSON object/array.
+            if (!cleaned.StartsWith('{') && !cleaned.StartsWith('['))
+            {
+                var firstObjectIndex = cleaned.IndexOf('{');
+                var firstArrayIndex = cleaned.IndexOf('[');
+
+                var firstJsonIndex = -1;
+                if (firstObjectIndex >= 0 && firstArrayIndex >= 0)
+                {
+                    firstJsonIndex = Math.Min(firstObjectIndex, firstArrayIndex);
+                }
+                else if (firstObjectIndex >= 0)
+                {
+                    firstJsonIndex = firstObjectIndex;
+                }
+                else if (firstArrayIndex >= 0)
+                {
+                    firstJsonIndex = firstArrayIndex;
+                }
+
+                if (firstJsonIndex > 0)
+                {
+                    cleaned = cleaned[firstJsonIndex..];
+                }
+            }
+
+            var lastObjectIndex = cleaned.LastIndexOf('}');
+            var lastArrayIndex = cleaned.LastIndexOf(']');
+            var lastJsonIndex = Math.Max(lastObjectIndex, lastArrayIndex);
+
+            if (lastJsonIndex >= 0 && lastJsonIndex < cleaned.Length - 1)
+            {
+                cleaned = cleaned[..(lastJsonIndex + 1)];
+            }
+
+            return cleaned;
         }
 
         private static string CleanupFencedJson(string value)
@@ -783,6 +1370,11 @@ namespace Theatre_TimeLine.Services
         /// Gets or sets the extracted content payload.
         /// </summary>
         public string? Content { get; set; }
+
+        /// <summary>
+        /// Gets or sets the extracted event location time in ISO-8601 format.
+        /// </summary>
+        public string? Location { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether release should be delayed.

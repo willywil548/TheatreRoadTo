@@ -63,6 +63,7 @@ namespace Theatre_TimeLine.Services
     /// <param name="CreatedCount">The number of created addresses for this processing run.</param>
     /// <param name="DroppedCount">The number of dropped extraction items.</param>
     /// <param name="UpdatedAt">The latest processing update timestamp, when available.</param>
+    /// <param name="StoredAs">The tenant-qualified stored email filename associated with this processing artifact, when available.</param>
     public sealed record EmailProcessingStatusSummary(
         Guid TenantId,
         Guid ProcessingId,
@@ -70,7 +71,8 @@ namespace Theatre_TimeLine.Services
         int Attempt,
         int CreatedCount,
         int DroppedCount,
-        DateTime? UpdatedAt);
+        DateTime? UpdatedAt,
+        string? StoredAs);
 
     /// <summary>
     /// Represents detailed artifact JSON for one processing run.
@@ -1023,6 +1025,29 @@ namespace Theatre_TimeLine.Services
                     continue;
                 }
 
+                string? storedAs = null;
+                var referencePath = Path.Combine(processingDir, "raw", "reference.json");
+                if (File.Exists(referencePath))
+                {
+                    try
+                    {
+                        using var referenceStream = File.OpenRead(referencePath);
+                        using var referenceDocument = JsonDocument.Parse(referenceStream);
+                        var referenceRoot = referenceDocument.RootElement;
+                        if (referenceRoot.TryGetProperty("storedAs", out var storedAsNode) && storedAsNode.ValueKind == JsonValueKind.String)
+                        {
+                            storedAs = storedAsNode.GetString();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "Failed to read processing reference for tenant {TenantId}, processing id {ProcessingId}",
+                            tenantId,
+                            folderName);
+                    }
+                }
+
                 try
                 {
                     using var stream = File.OpenRead(statePath);
@@ -1070,7 +1095,8 @@ namespace Theatre_TimeLine.Services
                         Attempt: attempt,
                         CreatedCount: createdCount,
                         DroppedCount: droppedCount,
-                        UpdatedAt: updatedAt));
+                        UpdatedAt: updatedAt,
+                        StoredAs: storedAs));
                 }
                 catch (Exception ex)
                 {
