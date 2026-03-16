@@ -189,6 +189,41 @@ namespace Theatre_TimeLine.Controllers
         }
 
         /// <summary>
+        /// Gets detailed processing artifacts for a specific inbound email processing run.
+        /// Endpoint: GET /api/sendgrid/processing/{tenantId}/{processingId}
+        /// Requires Global Admin or Tenant Manager (own tenant artifacts only).
+        /// </summary>
+        /// <param name="tenantId">The tenant ID that owns the processing artifact.</param>
+        /// <param name="processingId">The processing ID created at email ingestion time.</param>
+        [HttpGet("processing/{tenantId:guid}/{processingId:guid}")]
+        [Authorize]
+        public async Task<IActionResult> GetProcessingDetails(Guid tenantId, Guid processingId)
+        {
+            try
+            {
+                var result = await _sendGridEmailService.TryGetProcessingDetailsForAccessAsync(User, tenantId, processingId);
+                if (!result.Allowed)
+                {
+                    _logger.LogWarning("Unauthorized access attempt to processing details. TenantId: {TenantId}, ProcessingId: {ProcessingId}", tenantId, processingId);
+                    return Forbid();
+                }
+
+                if (!result.Found || result.Details == null)
+                {
+                    return NotFound(new { error = "Processing details not found" });
+                }
+
+                return Ok(result.Details);
+            }
+            catch (Exception ex)
+            {
+                var errorId = Guid.NewGuid().ToString();
+                _logger.LogError(ex, "Error retrieving processing details. ErrorId: {ErrorId}", errorId);
+                return StatusCode(500, new { error = "Failed to retrieve processing details", errorId });
+            }
+        }
+
+        /// <summary>
         /// Health check endpoint to verify the webhook is accessible.
         /// </summary>
         [HttpGet("health")]

@@ -38,6 +38,14 @@ namespace Theatre_TimeLine.Services
     public sealed record EmailProcessingListAccessResult(bool Allowed, IReadOnlyList<EmailProcessingStatusSummary> Statuses);
 
     /// <summary>
+    /// Represents the result of attempting to get processing artifact details for a caller.
+    /// </summary>
+    /// <param name="Allowed">Whether the caller is authorized to access processing details.</param>
+    /// <param name="Found">Whether the requested processing artifact exists.</param>
+    /// <param name="Details">The processing details payload when found and allowed.</param>
+    public sealed record EmailProcessingDetailsAccessResult(bool Allowed, bool Found, EmailProcessingDetails? Details);
+
+    /// <summary>
     /// Represents caller visibility for SendGrid email operations.
     /// </summary>
     /// <param name="Allowed">Whether the caller has any email access.</param>
@@ -63,6 +71,14 @@ namespace Theatre_TimeLine.Services
         int CreatedCount,
         int DroppedCount,
         DateTime? UpdatedAt);
+
+    /// <summary>
+    /// Represents detailed artifact JSON for one processing run.
+    /// </summary>
+    /// <param name="StateJson">The raw processing state JSON payload.</param>
+    /// <param name="CreatedJson">The created output items JSON payload.</param>
+    /// <param name="DroppedJson">The dropped output items JSON payload.</param>
+    public sealed record EmailProcessingDetails(string StateJson, string CreatedJson, string DroppedJson);
 
     /// <summary>
     /// Provides tenant-aware SendGrid inbound email processing and retrieval operations.
@@ -130,6 +146,18 @@ namespace Theatre_TimeLine.Services
         /// <param name="tenantIdFilter">Optional tenant filter. If provided, only that tenant is returned.</param>
         /// <returns>An access result containing authorization state and visible processing statuses when allowed.</returns>
         Task<EmailProcessingListAccessResult> TryListProcessingStatusesForAccessAsync(ClaimsPrincipal user, Guid? tenantIdFilter);
+
+        /// <summary>
+        /// Attempts to get processing artifact details visible to the provided caller.
+        /// </summary>
+        /// <param name="user">The caller claims principal.</param>
+        /// <param name="tenantId">The tenant that owns the processing artifact.</param>
+        /// <param name="processingId">The processing artifact identifier.</param>
+        /// <returns>An access result containing authorization state and processing details when available.</returns>
+        Task<EmailProcessingDetailsAccessResult> TryGetProcessingDetailsForAccessAsync(
+            ClaimsPrincipal user,
+            Guid tenantId,
+            Guid processingId);
 
         /// <summary>
         /// Gets the current health and configuration status for SendGrid email processing.
@@ -645,6 +673,28 @@ namespace Theatre_TimeLine.Services
         }
 
         /// <inheritdoc />
+        public async Task<EmailProcessingDetailsAccessResult> TryGetProcessingDetailsForAccessAsync(
+            ClaimsPrincipal user,
+            Guid tenantId,
+            Guid processingId)
+        {
+            var access = await ResolveEmailAccessAsync(user);
+            if (!access.Allowed)
+            {
+                return new EmailProcessingDetailsAccessResult(false, false, null);
+            }
+
+            // Tenant-scoped details are visible to global admins or managers in that tenant.
+            if (!access.HasGlobalAccess && !access.AllowedTenantIds.Contains(tenantId))
+            {
+                return new EmailProcessingDetailsAccessResult(false, false, null);
+            }
+
+            var details = TryReadProcessingDetails(tenantId, processingId);
+            return new EmailProcessingDetailsAccessResult(true, details != null, details);
+        }
+
+        /// <inheritdoc />
         public SendGridHealthStatus GetHealthStatus()
         {
             bool encryptionEnabled = _configuration.GetValue<bool>("SendGrid:EnableEncryption", true);
@@ -1032,6 +1082,45 @@ namespace Theatre_TimeLine.Services
             }
 
             return summaries;
+        }
+
+        /// <summary>
+        /// Attempts to read processing details for one processing artifact folder.
+        /// </summary>
+        /// <param name="tenantId">The tenant that owns the artifact.</param>
+        /// <param name="processingId">The processing identifier folder.</param>
+        /// <returns>The artifact JSON payloads when found; otherwise <see langword="null"/>.</returns>
+        private EmailProcessingDetails? TryReadProcessingDetails(Guid tenantId, Guid processingId)
+        {
+            var artifactRoot = Path.Combine(GetTenantEmailStoragePath(tenantId), processingId.ToString("N"));
+            var fullArtifactRoot = Path.GetFullPath(artifactRoot);
+            var tenantRoot = Path.GetFullPath(GetTenantEmailStoragePath(tenantId));
+
+            // Defense-in-depth: ensure caller-provided identifiers cannot escape tenant scope.
+            if (!fullArtifactRoot.StartsWith(tenantRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (!Directory.Exists(fullArtifactRoot))
+            {
+                return null;
+            }
+
+            var statePath = Path.Combine(fullArtifactRoot, "processing", "state.json");
+            if (!File.Exists(statePath))
+            {
+                return null;
+            }
+
+            var createdPath = Path.Combine(fullArtifactRoot, "outputs", "created.json");
+            var droppedPath = Path.Combine(fullArtifactRoot, "drops", "dropped.json");
+
+            var stateJson = File.ReadAllText(statePath);
+            var createdJson = File.Exists(createdPath) ? File.ReadAllText(createdPath) : "[]";
+            var droppedJson = File.Exists(droppedPath) ? File.ReadAllText(droppedPath) : "[]";
+
+            return new EmailProcessingDetails(stateJson, createdJson, droppedJson);
         }
 
         private async Task InitializeProcessingArtifactAsync(

@@ -58,6 +58,7 @@
                     <MudTh>Attempt</MudTh>
                     <MudTh>Created</MudTh>
                     <MudTh>Dropped</MudTh>
+                    <MudTh></MudTh>
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd>@(context.UpdatedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</MudTd>
@@ -71,8 +72,37 @@
                     <MudTd>@context.Attempt</MudTd>
                     <MudTd>@context.CreatedCount</MudTd>
                     <MudTd>@context.DroppedCount</MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => LoadDetailsAsync(context))">Details</MudButton>
+                    </MudTd>
                 </RowTemplate>
             </MudTable>
+
+            @if (_detailsLoading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
+            }
+            else if (_selectedStatus != null && _selectedDetails != null)
+            {
+                <MudPaper Class="pa-3 mt-3" Outlined="true">
+                    <MudText Typo="Typo.subtitle1">Processing Details</MudText>
+                    <MudText Typo="Typo.caption">
+                        Tenant: @_selectedStatus.TenantId | Processing: @_selectedStatus.ProcessingId
+                    </MudText>
+
+                    <MudTabs Class="mt-2" Rounded="true" ApplyEffectsToContainer="true">
+                        <MudTabPanel Text="State">
+                            <MudTextField T="string" Value="@_selectedDetails.StateJson" Lines="10" ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudTabPanel>
+                        <MudTabPanel Text="Created">
+                            <MudTextField T="string" Value="@_selectedDetails.CreatedJson" Lines="12" ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudTabPanel>
+                        <MudTabPanel Text="Dropped">
+                            <MudTextField T="string" Value="@_selectedDetails.DroppedJson" Lines="12" ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudTabPanel>
+                    </MudTabs>
+                </MudPaper>
+            }
         }
     }
 </MudPaper>
@@ -81,7 +111,10 @@
     private bool _isLoading = true;
     private bool _canManage;
     private Guid? _selectedTenantId;
+    private bool _detailsLoading;
     private ClaimsPrincipal? _user;
+    private EmailProcessingStatusSummary? _selectedStatus;
+    private EmailProcessingDetails? _selectedDetails;
 
     private readonly List<ITenantContainer> _accessibleTenants = [];
     private readonly List<EmailProcessingStatusSummary> _statuses = [];
@@ -148,12 +181,42 @@
             return;
         }
 
+        // Refreshing the main list clears the selected detail panel to avoid stale artifacts.
+        _selectedStatus = null;
+        _selectedDetails = null;
+
         var result = await SendGridEmailService.TryListProcessingStatusesForAccessAsync(_user, _selectedTenantId);
         _statuses.Clear();
 
         if (result.Allowed)
         {
             _statuses.AddRange(result.Statuses);
+        }
+    }
+
+    /// <summary>
+    /// Loads detailed artifact JSON for one processing status row.
+    /// </summary>
+    /// <param name="status">The selected processing status row.</param>
+    private async Task LoadDetailsAsync(EmailProcessingStatusSummary status)
+    {
+        if (!_canManage || _user == null)
+        {
+            return;
+        }
+
+        _detailsLoading = true;
+        _selectedStatus = status;
+
+        try
+        {
+            // Read details through the same service-level access checks used by API endpoints.
+            var result = await SendGridEmailService.TryGetProcessingDetailsForAccessAsync(_user, status.TenantId, status.ProcessingId);
+            _selectedDetails = result.Allowed && result.Found ? result.Details : null;
+        }
+        finally
+        {
+            _detailsLoading = false;
         }
     }
 
