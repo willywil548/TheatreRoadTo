@@ -1,9 +1,9 @@
 using System.Globalization;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Azure;
 using Azure.AI.OpenAI;
 using OpenAI.Chat;
@@ -127,29 +127,99 @@ namespace Theatre_TimeLine.Services
     public sealed class InboundEmailProcessingQueue : BackgroundService, IInboundEmailProcessingQueue
     {
         private const int MaxRetryAttempts = 3;
+        private const int DefaultInMemoryQueueCapacity = 500;
+        private const int DefaultMemoryResumeThresholdPercent = 80;
+
+        private static readonly Meter QueueMeter = new("Theatre_TimeLine.InboundEmailProcessing", "1.0.0");
+        private static readonly Counter<long> InMemoryEnqueueCounter = QueueMeter.CreateCounter<long>("inbound_queue_inmemory_enqueued_total");
+        private static readonly Counter<long> OverflowEnqueueCounter = QueueMeter.CreateCounter<long>("inbound_queue_overflow_enqueued_total");
+        private static readonly Counter<long> InMemoryDequeueCounter = QueueMeter.CreateCounter<long>("inbound_queue_inmemory_dequeued_total");
+        private static readonly Counter<long> ProcessedCounter = QueueMeter.CreateCounter<long>("inbound_queue_processed_total");
+        private static readonly Counter<long> RetryScheduledCounter = QueueMeter.CreateCounter<long>("inbound_queue_retry_scheduled_total");
 
         // In-memory channel keeps ingestion and processing decoupled without external queue infrastructure.
-        private readonly Channel<InboundEmailProcessingRequest> _channel = Channel.CreateUnbounded<InboundEmailProcessingRequest>();
+        // The channel is bounded to cap memory usage under sustained load.
+        private readonly Channel<InboundEmailProcessingRequest> _channel;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<InboundEmailProcessingQueue> _logger;
+
+        // Memory-guard settings to dynamically reduce in-memory intake under pressure.
+        private readonly long _memoryCapBytes;
+        private readonly double _memoryResumeThresholdRatio;
+
+        // Runtime queue/memory state used by metrics and intake decisions.
+        private long _inMemoryQueueDepth;
+        private bool _isMemoryIntakePaused;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="InboundEmailProcessingQueue"/> class.
         /// </summary>
         /// <param name="scopeFactory">Creates scoped dependencies for each queue message.</param>
+        /// <param name="configuration">Application configuration for queue capacity and overflow behavior.</param>
         /// <param name="logger">The logger instance.</param>
         public InboundEmailProcessingQueue(
             IServiceScopeFactory scopeFactory,
+            IConfiguration configuration,
             ILogger<InboundEmailProcessingQueue> logger)
         {
             _scopeFactory = scopeFactory;
+            _configuration = configuration;
             _logger = logger;
+
+            var capacity = _configuration.GetValue<int>("SendGrid:InboundProcessing:InMemoryQueueCapacity", DefaultInMemoryQueueCapacity);
+            if (capacity <= 0)
+            {
+                capacity = DefaultInMemoryQueueCapacity;
+            }
+
+            // DropWrite gives us immediate backpressure signal (TryWrite=false) so we can
+            // persist overflow requests to disk instead of growing memory indefinitely.
+            var channelOptions = new BoundedChannelOptions(capacity)
+            {
+                FullMode = BoundedChannelFullMode.DropWrite,
+                SingleReader = true,
+                SingleWriter = false
+            };
+
+            _channel = Channel.CreateBounded<InboundEmailProcessingRequest>(channelOptions);
+
+            var memoryCapMb = _configuration.GetValue<long>("SendGrid:InboundProcessing:MemoryCapMb", 0);
+            _memoryCapBytes = memoryCapMb > 0 ? memoryCapMb * 1024L * 1024L : 0;
+
+            var resumeThresholdPercent = _configuration.GetValue<int>("SendGrid:InboundProcessing:MemoryResumeThresholdPercent", DefaultMemoryResumeThresholdPercent);
+            resumeThresholdPercent = Math.Clamp(resumeThresholdPercent, 10, 95);
+            _memoryResumeThresholdRatio = resumeThresholdPercent / 100d;
+
+            // Metrics make queue behavior visible for tuning capacity and memory thresholds.
+            QueueMeter.CreateObservableGauge("inbound_queue_inmemory_depth", () => Interlocked.Read(ref _inMemoryQueueDepth));
+            QueueMeter.CreateObservableGauge("inbound_queue_intake_paused", () => _isMemoryIntakePaused ? 1 : 0);
+            QueueMeter.CreateObservableGauge("inbound_queue_process_private_memory_mb", () => GetCurrentPrivateMemoryMb());
         }
 
         /// <inheritdoc />
-        public ValueTask QueueAsync(InboundEmailProcessingRequest request, CancellationToken cancellationToken = default)
+        public async ValueTask QueueAsync(InboundEmailProcessingRequest request, CancellationToken cancellationToken = default)
         {
-            return _channel.Writer.WriteAsync(request, cancellationToken);
+            EvaluateMemoryIntakeState();
+
+            if (_isMemoryIntakePaused)
+            {
+                await PersistOverflowRequestAsync(request, cancellationToken);
+                OverflowEnqueueCounter.Add(1);
+                return;
+            }
+
+            if (_channel.Writer.TryWrite(request))
+            {
+                Interlocked.Increment(ref _inMemoryQueueDepth);
+                InMemoryEnqueueCounter.Add(1);
+                return;
+            }
+
+            // Channel is at capacity; persist overflow request for later pickup instead of
+            // allowing unbounded memory growth.
+            await PersistOverflowRequestAsync(request, cancellationToken);
+            OverflowEnqueueCounter.Add(1);
         }
 
         /// <summary>
@@ -164,27 +234,50 @@ namespace Theatre_TimeLine.Services
             // Continuously drain queued requests until shutdown.
             await foreach (var request in _channel.Reader.ReadAllAsync(stoppingToken))
             {
+                Interlocked.Decrement(ref _inMemoryQueueDepth);
+                InMemoryDequeueCounter.Add(1);
+
                 using var scope = _scopeFactory.CreateScope();
                 var processor = scope.ServiceProvider.GetRequiredService<IInboundEmailProcessor>();
 
                 var result = await processor.ProcessAsync(request, stoppingToken);
+                ProcessedCounter.Add(1);
                 if (result.Success)
                 {
+                    await RecoverOverflowRequestsAsync(stoppingToken);
                     continue;
                 }
 
-                if (!result.Retryable || request.Attempt >= MaxRetryAttempts)
+                // Mark retry exhaustion as terminal so UI/recovery do not treat it as in-progress.
+                if (result.Retryable && request.Attempt >= MaxRetryAttempts)
                 {
+                    await MarkMaxRetriesExceededAsync(request, result.Summary, stoppingToken);
+
                     _logger.LogWarning(
-                        "Inbound email processing permanently failed. EmailId: {EmailId}, Attempt: {Attempt}, Reason: {Reason}",
+                        "Inbound email processing reached max retries and was marked failed. EmailId: {EmailId}, Attempt: {Attempt}, Reason: {Reason}",
                         request.EmailId,
                         request.Attempt,
                         result.Summary);
                     continue;
                 }
 
+                if (!result.Retryable)
+                {
+                    _logger.LogWarning(
+                        "Inbound email processing permanently failed. EmailId: {EmailId}, Attempt: {Attempt}, Reason: {Reason}",
+                        request.EmailId,
+                        request.Attempt,
+                        result.Summary);
+                    await RecoverOverflowRequestsAsync(stoppingToken);
+                    continue;
+                }
+
+                // Opportunistically move overflow-spooled work back into memory as capacity becomes available.
+                await RecoverOverflowRequestsAsync(stoppingToken);
+
                 var retryRequest = request with { Attempt = request.Attempt + 1 };
                 var backoffSeconds = Math.Min(10, request.Attempt * 2);
+                RetryScheduledCounter.Add(1);
 
                 // Retry asynchronously with bounded backoff so ingestion is never blocked.
                 _ = Task.Run(async () =>
@@ -199,6 +292,37 @@ namespace Theatre_TimeLine.Services
                     }
                 }, stoppingToken);
             }
+        }
+
+        /// <summary>
+        /// Writes a terminal failed state when retry attempts are exhausted.
+        /// </summary>
+        /// <param name="request">The processing request that exceeded retry attempts.</param>
+        /// <param name="reason">The failure summary that caused retry exhaustion.</param>
+        /// <param name="cancellationToken">Token to cancel state-write operation.</param>
+        /// <returns>A task that completes when the terminal state is persisted.</returns>
+        private async Task MarkMaxRetriesExceededAsync(InboundEmailProcessingRequest request, string reason, CancellationToken cancellationToken)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var tenantManagerService = scope.ServiceProvider.GetRequiredService<ITenantManagerService>();
+
+            var artifactRoot = Path.Combine(
+                tenantManagerService.GetTenantRootPath(request.TenantId),
+                "emails",
+                request.EmailId.ToString("N"));
+
+            var processingPath = Path.Combine(artifactRoot, "processing");
+            Directory.CreateDirectory(processingPath);
+
+            var statePath = Path.Combine(processingPath, "state.json");
+            await using var stream = File.Create(statePath);
+            await JsonSerializer.SerializeAsync(stream, new
+            {
+                status = "failed",
+                attempt = request.Attempt,
+                updatedAt = DateTime.UtcNow,
+                reason = $"Max retries exceeded: {reason}"
+            }, cancellationToken: cancellationToken);
         }
 
         /// <summary>
@@ -260,6 +384,168 @@ namespace Theatre_TimeLine.Services
             }
 
             _logger.LogInformation("Recovered {RecoveredCount} inbound email processing request(s) from disk artifacts.", recoveredCount);
+
+            // Drain any overflow requests persisted while memory queue was full.
+            var overflowRecovered = await RecoverOverflowRequestsAsync(cancellationToken);
+            if (overflowRecovered > 0)
+            {
+                _logger.LogInformation("Recovered {RecoveredOverflowCount} overflow queue request(s) from disk.", overflowRecovered);
+            }
+        }
+
+        /// <summary>
+        /// Persists a queue request when in-memory capacity is exhausted.
+        /// </summary>
+        /// <param name="request">The inbound processing request.</param>
+        /// <param name="cancellationToken">Token to cancel disk persistence.</param>
+        /// <returns>A task that completes when overflow is persisted.</returns>
+        private async Task PersistOverflowRequestAsync(InboundEmailProcessingRequest request, CancellationToken cancellationToken)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var tenantManagerService = scope.ServiceProvider.GetRequiredService<ITenantManagerService>();
+
+            var overflowFolder = Path.Combine(
+                tenantManagerService.GetTenantRootPath(request.TenantId),
+                "emails",
+                request.EmailId.ToString("N"),
+                "processing",
+                "overflow");
+
+            Directory.CreateDirectory(overflowFolder);
+
+            var overflowPath = Path.Combine(overflowFolder, $"request_attempt_{request.Attempt:D2}.json");
+            await using var stream = File.Create(overflowPath);
+            await JsonSerializer.SerializeAsync(stream, request, cancellationToken: cancellationToken);
+
+            _logger.LogWarning(
+                "Inbound processing queue capacity reached. Request persisted to overflow. EmailId: {EmailId}, Attempt: {Attempt}",
+                request.EmailId,
+                request.Attempt);
+        }
+
+        /// <summary>
+        /// Recovers persisted overflow requests into the in-memory queue.
+        /// </summary>
+        /// <param name="cancellationToken">Token to cancel recovery work.</param>
+        /// <returns>Number of recovered overflow requests.</returns>
+        private async Task<int> RecoverOverflowRequestsAsync(CancellationToken cancellationToken)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var tenantManagerService = scope.ServiceProvider.GetRequiredService<ITenantManagerService>();
+
+            EvaluateMemoryIntakeState();
+            if (_isMemoryIntakePaused)
+            {
+                // Keep overflow on disk while process memory is above configured cap.
+                return 0;
+            }
+
+            int recovered = 0;
+
+            foreach (var tenant in tenantManagerService.GetTenants())
+            {
+                var tenantEmailStoragePath = Path.Combine(tenantManagerService.GetTenantRootPath(tenant.TenantId), "emails");
+                if (!Directory.Exists(tenantEmailStoragePath))
+                {
+                    continue;
+                }
+
+                foreach (var processingDir in Directory.GetDirectories(tenantEmailStoragePath))
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return recovered;
+                    }
+
+                    var overflowFolder = Path.Combine(processingDir, "processing", "overflow");
+                    if (!Directory.Exists(overflowFolder))
+                    {
+                        continue;
+                    }
+
+                    var overflowFiles = Directory.GetFiles(overflowFolder, "request_attempt_*.json")
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+
+                    foreach (var overflowFile in overflowFiles)
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            return recovered;
+                        }
+
+                        try
+                        {
+                            await using var stream = File.OpenRead(overflowFile);
+                            var request = await JsonSerializer.DeserializeAsync<InboundEmailProcessingRequest>(stream, cancellationToken: cancellationToken);
+                            if (request == null)
+                            {
+                                continue;
+                            }
+
+                            if (_channel.Writer.TryWrite(request))
+                            {
+                                Interlocked.Increment(ref _inMemoryQueueDepth);
+                                InMemoryEnqueueCounter.Add(1);
+                                File.Delete(overflowFile);
+                                recovered++;
+                            }
+                            else
+                            {
+                                // Stop recovery when queue is full again.
+                                return recovered;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed recovering overflow queue request from {OverflowFile}", overflowFile);
+                        }
+                    }
+                }
+            }
+
+            return recovered;
+        }
+
+        /// <summary>
+        /// Evaluates process memory usage and toggles in-memory intake pause/resume state.
+        /// </summary>
+        private void EvaluateMemoryIntakeState()
+        {
+            if (_memoryCapBytes <= 0)
+            {
+                _isMemoryIntakePaused = false;
+                return;
+            }
+
+            var currentMemory = Process.GetCurrentProcess().PrivateMemorySize64;
+            if (!_isMemoryIntakePaused && currentMemory >= _memoryCapBytes)
+            {
+                _isMemoryIntakePaused = true;
+                _logger.LogWarning(
+                    "Inbound processing in-memory intake paused. Process memory {CurrentMb} MB reached cap {CapMb} MB.",
+                    currentMemory / 1024d / 1024d,
+                    _memoryCapBytes / 1024d / 1024d);
+                return;
+            }
+
+            if (_isMemoryIntakePaused && currentMemory <= (_memoryCapBytes * _memoryResumeThresholdRatio))
+            {
+                _isMemoryIntakePaused = false;
+                _logger.LogInformation(
+                    "Inbound processing in-memory intake resumed. Process memory {CurrentMb} MB is below resume threshold {ResumeMb} MB.",
+                    currentMemory / 1024d / 1024d,
+                    (_memoryCapBytes * _memoryResumeThresholdRatio) / 1024d / 1024d);
+            }
+        }
+
+        /// <summary>
+        /// Gets the current process private memory in megabytes for metrics.
+        /// </summary>
+        /// <returns>The process private memory value in MB.</returns>
+        private static double GetCurrentPrivateMemoryMb()
+        {
+            return Process.GetCurrentProcess().PrivateMemorySize64 / 1024d / 1024d;
         }
 
         /// <summary>
@@ -511,6 +797,16 @@ namespace Theatre_TimeLine.Services
                 var tenant = _tenantManagerService.GetTenant(request.TenantId);
                 if (tenant == null)
                 {
+                    // Write a terminal failure so the request is not left in "processing"
+                    // and repeatedly recovered as in-progress after restarts.
+                    await WriteProcessingStateAsync(artifactRoot, new
+                    {
+                        status = "failed",
+                        reason = $"Tenant {request.TenantId} not found.",
+                        attempt = request.Attempt,
+                        updatedAt = DateTime.UtcNow
+                    }, cancellationToken);
+
                     return new InboundEmailProcessingResult(false, false, "Tenant not found");
                 }
 
@@ -1042,10 +1338,14 @@ namespace Theatre_TimeLine.Services
             PropertyNameCaseInsensitive = true
         };
 
-        private readonly ChatClient _chatClient;
+        private readonly ChatClient? _chatClient;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AzureOpenAiInboundEmailAiExtractionService> _logger;
         private readonly IReadOnlyList<string> _systemContextMessages;
+        private readonly bool _isAiEnabled;
+        private readonly string? _aiDisabledReason;
+        private readonly bool _includeRawEmailInPrompt;
+        private readonly int _rawEmailMaxChars;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AzureOpenAiInboundEmailAiExtractionService"/> class.
@@ -1059,23 +1359,27 @@ namespace Theatre_TimeLine.Services
             _configuration = configuration;
             _logger = logger;
 
+            // By default, avoid sending raw MIME content to reduce token cost and data exposure.
+            _includeRawEmailInPrompt = _configuration.GetValue<bool>("AI:OpenAI:IncludeRawEmailInPrompt", false);
+            _rawEmailMaxChars = Math.Clamp(
+                _configuration.GetValue<int>("AI:OpenAI:RawEmailMaxChars", 4000),
+                500,
+                20000);
+
             // Keep the current configuration section and add a deployment key for Azure OpenAI.
             var endpoint = _configuration["AI:API:URL"];
             var apiKey = _configuration["AI:API:Key"];
             var deploymentName = _configuration["AI:OpenAI:DeploymentName"] ?? "gpt-4.1-mini";
 
-            if (string.IsNullOrWhiteSpace(endpoint))
-            {
-                throw new InvalidOperationException("AI:API:URL is not configured.");
-            }
+            _isAiEnabled = TryCreateChatClient(endpoint, apiKey, deploymentName, out var chatClient, out var disabledReason);
+            _chatClient = chatClient;
+            _aiDisabledReason = disabledReason;
 
-            if (string.IsNullOrWhiteSpace(apiKey))
+            if (!_isAiEnabled)
             {
-                throw new InvalidOperationException("AI:API:Key is not configured.");
+                // Do not throw for invalid config; pipeline can still create a plain notification.
+                _logger.LogWarning("Azure OpenAI extraction disabled: {Reason}. Falling back to plain notification extraction.", _aiDisabledReason);
             }
-
-            var client = new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey));
-            _chatClient = client.GetChatClient(deploymentName);
 
             // Load simple system-context messages from settings so behavior can be tuned
             // without code changes.
@@ -1090,6 +1394,12 @@ namespace Theatre_TimeLine.Services
         {
             var bodyContent = email.GetBodyContent() ?? email.GetTextBody() ?? email.GetHtmlBody() ?? string.Empty;
 
+            if (!_isAiEnabled || _chatClient == null)
+            {
+                // Explicit fallback mode: emit one plain notification from inbound body.
+                return BuildFallbackNotification(email, bodyContent, _aiDisabledReason);
+            }
+
             // Ask the model for strict JSON and include configurable context messages.
             var messages = new List<ChatMessage>();
 
@@ -1098,7 +1408,12 @@ namespace Theatre_TimeLine.Services
                 messages.Add(new SystemChatMessage(contextMessage));
             }
 
-            messages.Add(new UserChatMessage(BuildExtractionPrompt(email, bodyContent, context)));
+            messages.Add(new UserChatMessage(BuildExtractionPrompt(
+                email,
+                bodyContent,
+                context,
+                _includeRawEmailInPrompt,
+                _rawEmailMaxChars)));
 
             try
             {
@@ -1117,8 +1432,87 @@ namespace Theatre_TimeLine.Services
             catch (RequestFailedException ex)
             {
                 _logger.LogWarning(ex, "Azure OpenAI returned non-retryable status code {StatusCode}", ex.Status);
-                return new AiExtractionResponse();
+                return BuildFallbackNotification(email, bodyContent, $"Azure OpenAI status {ex.Status}");
             }
+        }
+
+        /// <summary>
+        /// Attempts to create an Azure OpenAI chat client from configuration values.
+        /// </summary>
+        /// <param name="endpoint">Configured endpoint value.</param>
+        /// <param name="apiKey">Configured API key value.</param>
+        /// <param name="deploymentName">Configured deployment name.</param>
+        /// <param name="chatClient">Resolved chat client when configuration is valid.</param>
+        /// <param name="disabledReason">Reason extraction is disabled when configuration is invalid.</param>
+        /// <returns><see langword="true"/> when the chat client can be used; otherwise <see langword="false"/>.</returns>
+        private static bool TryCreateChatClient(
+            string? endpoint,
+            string? apiKey,
+            string deploymentName,
+            out ChatClient? chatClient,
+            out string? disabledReason)
+        {
+            chatClient = null;
+            disabledReason = null;
+
+            if (string.IsNullOrWhiteSpace(endpoint))
+            {
+                disabledReason = "AI:API:URL is missing.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                disabledReason = "AI:API:Key is missing.";
+                return false;
+            }
+
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri) ||
+                !(endpointUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) || endpointUri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase)) ||
+                string.IsNullOrWhiteSpace(endpointUri.Host))
+            {
+                disabledReason = "AI:API:URL is not a valid absolute URI.";
+                return false;
+            }
+
+            var client = new AzureOpenAIClient(endpointUri, new AzureKeyCredential(apiKey));
+            chatClient = client.GetChatClient(deploymentName);
+            return true;
+        }
+
+        /// <summary>
+        /// Builds a fallback extraction response that always creates one plain notification.
+        /// </summary>
+        /// <param name="email">Inbound email source.</param>
+        /// <param name="bodyContent">Resolved body content.</param>
+        /// <param name="reason">Fallback reason, used only for logs/diagnostics text.</param>
+        /// <returns>A single-item notification extraction response.</returns>
+        private static AiExtractionResponse BuildFallbackNotification(SendGridInboundEmail email, string bodyContent, string? reason)
+        {
+            var content = string.IsNullOrWhiteSpace(bodyContent)
+                ? "(no readable body content)"
+                : bodyContent;
+
+            var description = string.IsNullOrWhiteSpace(reason)
+                ? $"Inbound email from {email.GetFromDisplayName() ?? email.GetFromEmail() ?? "unknown sender"}"
+                : $"Inbound email fallback: {reason}";
+
+            return new AiExtractionResponse
+            {
+                Items =
+                [
+                    new AiExtractionItem
+                    {
+                        AddressType = "Notification",
+                        Confidence = 1.0,
+                        Title = string.IsNullOrWhiteSpace(email.Subject) ? "Inbound Email" : email.Subject,
+                        Description = description,
+                        Content = content,
+                        DelayRelease = false,
+                        Tags = ["Notification", "Fallback"]
+                    }
+                ]
+            };
         }
 
         /// <summary>
@@ -1167,7 +1561,12 @@ namespace Theatre_TimeLine.Services
         /// <param name="bodyContent">The normalized body content.</param>
         /// <param name="context">Routing and road timeline context.</param>
         /// <returns>The prompt string for structured extraction.</returns>
-        private static string BuildExtractionPrompt(SendGridInboundEmail email, string bodyContent, AiExtractionContext context)
+        private static string BuildExtractionPrompt(
+            SendGridInboundEmail email,
+            string bodyContent,
+            AiExtractionContext context,
+            bool includeRawEmailInPrompt,
+            int rawEmailMaxChars)
         {
             var modelPayload = new
             {
@@ -1177,7 +1576,9 @@ namespace Theatre_TimeLine.Services
                 subject = email.Subject,
                 receivedAt = email.ReceivedAt,
                 content = bodyContent,
-                rawEmail = email.RawEmail,
+                rawEmail = includeRawEmailInPrompt
+                    ? BuildRawEmailSnippet(email.RawEmail, rawEmailMaxChars)
+                    : null,
                 dkim = email.Dkim,
                 spf = email.Spf,
                 spamScore = email.GetSpamScoreValue(),
@@ -1193,6 +1594,33 @@ namespace Theatre_TimeLine.Services
             };
 
             return JsonSerializer.Serialize(modelPayload);
+        }
+
+        /// <summary>
+        /// Builds a truncated, lightly redacted raw-email snippet for optional prompt use.
+        /// </summary>
+        /// <param name="rawEmail">The full raw MIME email content.</param>
+        /// <param name="maxChars">Maximum number of characters to include.</param>
+        /// <returns>A safe snippet suitable for prompt payloads.</returns>
+        private static string? BuildRawEmailSnippet(string? rawEmail, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(rawEmail))
+            {
+                return null;
+            }
+
+            var normalized = rawEmail.Replace("\r\n", "\n");
+
+            // Remove common authentication headers to reduce sensitive metadata leakage.
+            normalized = Regex.Replace(normalized, "(?im)^authorization:.*$", "Authorization: [redacted]");
+            normalized = Regex.Replace(normalized, "(?im)^x-api-key:.*$", "x-api-key: [redacted]");
+
+            if (normalized.Length <= maxChars)
+            {
+                return normalized;
+            }
+
+            return string.Concat(normalized.AsSpan(0, maxChars), "\n...[truncated]");
         }
 
         private static AiExtractionResponse ParseResponse(string responseBody)

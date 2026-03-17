@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -1074,17 +1075,19 @@ namespace Theatre_TimeLine.Services
                     if (root.TryGetProperty("updatedAt", out var updatedNode) && updatedNode.ValueKind == JsonValueKind.String)
                     {
                         var rawUpdated = updatedNode.GetString();
-                        if (DateTime.TryParse(rawUpdated, out var parsedUpdated))
+                        if (DateTimeOffset.TryParse(rawUpdated, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedUpdated))
                         {
-                            updatedAt = parsedUpdated;
+                            // Persist and compare processing timestamps consistently in UTC.
+                            updatedAt = parsedUpdated.UtcDateTime;
                         }
                     }
                     else if (root.TryGetProperty("queuedAt", out var queuedNode) && queuedNode.ValueKind == JsonValueKind.String)
                     {
                         var rawQueued = queuedNode.GetString();
-                        if (DateTime.TryParse(rawQueued, out var parsedQueued))
+                        if (DateTimeOffset.TryParse(rawQueued, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedQueued))
                         {
-                            updatedAt = parsedQueued;
+                            // Persist and compare processing timestamps consistently in UTC.
+                            updatedAt = parsedQueued.UtcDateTime;
                         }
                     }
 
