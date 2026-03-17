@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -31,12 +32,56 @@ namespace Theatre_TimeLine.Services
     public sealed record EmailListAccessResult(bool Allowed, IReadOnlyList<StoredEmailSummary> Emails);
 
     /// <summary>
+    /// Represents the result of attempting to list processing statuses for a caller.
+    /// </summary>
+    /// <param name="Allowed">Whether the caller is authorized to list processing statuses.</param>
+    /// <param name="Statuses">The visible processing statuses for the caller and optional filter.</param>
+    public sealed record EmailProcessingListAccessResult(bool Allowed, IReadOnlyList<EmailProcessingStatusSummary> Statuses);
+
+    /// <summary>
+    /// Represents the result of attempting to get processing artifact details for a caller.
+    /// </summary>
+    /// <param name="Allowed">Whether the caller is authorized to access processing details.</param>
+    /// <param name="Found">Whether the requested processing artifact exists.</param>
+    /// <param name="Details">The processing details payload when found and allowed.</param>
+    public sealed record EmailProcessingDetailsAccessResult(bool Allowed, bool Found, EmailProcessingDetails? Details);
+
+    /// <summary>
     /// Represents caller visibility for SendGrid email operations.
     /// </summary>
     /// <param name="Allowed">Whether the caller has any email access.</param>
     /// <param name="HasGlobalAccess">Whether the caller can access all tenants.</param>
     /// <param name="AllowedTenantIds">Tenant IDs visible to the caller.</param>
     public sealed record EmailAccessScope(bool Allowed, bool HasGlobalAccess, HashSet<Guid> AllowedTenantIds);
+
+    /// <summary>
+    /// Represents a summary view of asynchronous email processing state.
+    /// </summary>
+    /// <param name="TenantId">The tenant that owns the processing artifact.</param>
+    /// <param name="ProcessingId">The processing identifier for the inbound email.</param>
+    /// <param name="Status">The current processing state value.</param>
+    /// <param name="Attempt">The current attempt count.</param>
+    /// <param name="CreatedCount">The number of created addresses for this processing run.</param>
+    /// <param name="DroppedCount">The number of dropped extraction items.</param>
+    /// <param name="UpdatedAt">The latest processing update timestamp, when available.</param>
+    /// <param name="StoredAs">The tenant-qualified stored email filename associated with this processing artifact, when available.</param>
+    public sealed record EmailProcessingStatusSummary(
+        Guid TenantId,
+        Guid ProcessingId,
+        string Status,
+        int Attempt,
+        int CreatedCount,
+        int DroppedCount,
+        DateTime? UpdatedAt,
+        string? StoredAs);
+
+    /// <summary>
+    /// Represents detailed artifact JSON for one processing run.
+    /// </summary>
+    /// <param name="StateJson">The raw processing state JSON payload.</param>
+    /// <param name="CreatedJson">The created output items JSON payload.</param>
+    /// <param name="DroppedJson">The dropped output items JSON payload.</param>
+    public sealed record EmailProcessingDetails(string StateJson, string CreatedJson, string DroppedJson);
 
     /// <summary>
     /// Provides tenant-aware SendGrid inbound email processing and retrieval operations.
@@ -98,6 +143,26 @@ namespace Theatre_TimeLine.Services
         Task<EmailListAccessResult> TryListStoredEmailsForAccessAsync(ClaimsPrincipal user, Guid? tenantIdFilter);
 
         /// <summary>
+        /// Attempts to list processing statuses visible to the provided caller.
+        /// </summary>
+        /// <param name="user">The caller claims principal.</param>
+        /// <param name="tenantIdFilter">Optional tenant filter. If provided, only that tenant is returned.</param>
+        /// <returns>An access result containing authorization state and visible processing statuses when allowed.</returns>
+        Task<EmailProcessingListAccessResult> TryListProcessingStatusesForAccessAsync(ClaimsPrincipal user, Guid? tenantIdFilter);
+
+        /// <summary>
+        /// Attempts to get processing artifact details visible to the provided caller.
+        /// </summary>
+        /// <param name="user">The caller claims principal.</param>
+        /// <param name="tenantId">The tenant that owns the processing artifact.</param>
+        /// <param name="processingId">The processing artifact identifier.</param>
+        /// <returns>An access result containing authorization state and processing details when available.</returns>
+        Task<EmailProcessingDetailsAccessResult> TryGetProcessingDetailsForAccessAsync(
+            ClaimsPrincipal user,
+            Guid tenantId,
+            Guid processingId);
+
+        /// <summary>
         /// Gets the current health and configuration status for SendGrid email processing.
         /// </summary>
         /// <returns>A health status snapshot.</returns>
@@ -129,7 +194,9 @@ namespace Theatre_TimeLine.Services
         string? From,
         string? Subject,
         double SpamScore,
-        bool Saved = true);
+        bool Saved = true,
+        Guid? ProcessingId = null,
+        bool QueuedForProcessing = false);
 
     /// <summary>
     /// Represents the status of a stored-email lookup request.
@@ -234,6 +301,7 @@ namespace Theatre_TimeLine.Services
         private readonly IConfiguration _configuration;
         private readonly IEmailEncryptionService _encryptionService;
         private readonly ISendGridWebhookValidator _webhookValidator;
+        private readonly IInboundEmailProcessingQueue _processingQueue;
         private readonly ISecurityGroupService _securityGroupService;
         private readonly ITenantManagerService _tenantManagerService;
         private readonly Guid? _demoTenantId;
@@ -245,6 +313,7 @@ namespace Theatre_TimeLine.Services
         /// <param name="configuration">The application configuration.</param>
         /// <param name="encryptionService">The email encryption service.</param>
         /// <param name="webhookValidator">The webhook validator service.</param>
+        /// <param name="processingQueue">The background processing queue.</param>
         /// <param name="securityGroupService">The security group service.</param>
         /// <param name="tenantManagerService">The tenant manager service.</param>
         public SendGridEmailService(
@@ -252,6 +321,7 @@ namespace Theatre_TimeLine.Services
             IConfiguration configuration,
             IEmailEncryptionService encryptionService,
             ISendGridWebhookValidator webhookValidator,
+            IInboundEmailProcessingQueue processingQueue,
             ISecurityGroupService securityGroupService,
             ITenantManagerService tenantManagerService)
         {
@@ -259,6 +329,7 @@ namespace Theatre_TimeLine.Services
             _configuration = configuration;
             _encryptionService = encryptionService;
             _webhookValidator = webhookValidator;
+            _processingQueue = processingQueue;
             _securityGroupService = securityGroupService;
             _tenantManagerService = tenantManagerService;
 
@@ -421,19 +492,32 @@ namespace Theatre_TimeLine.Services
             string jsonContent = JsonSerializer.Serialize(email, options);
             await _encryptionService.WriteEncryptedFileAsync(filePath, jsonContent);
 
-            // Only create addresses when recipient domain contains a subdomain level.
-            if (tenantResolution.HasSubdomain)
+            var processingId = Guid.NewGuid();
+
+            // Create a deterministic per-email artifact workspace so queue workers can track
+            // status, created outputs, and dropped items without re-reading controller context.
+            await InitializeProcessingArtifactAsync(tenantId, processingId, email.StoredAs, tenantResolution, context.RequestAborted);
+
+            // Preserve existing routing behavior: only subdomain-routed messages create timeline
+            // addresses. Non-subdomain emails are still ingested and stored for audit/review.
+            var shouldQueueForProcessing = tenantResolution.HasSubdomain &&
+                                           (tenantResolution.Status == TenantRoutingStatus.Matched ||
+                                            (tenantResolution.Status == TenantRoutingStatus.MatchedTenantRoad && tenantResolution.RoadId.HasValue));
+
+            if (shouldQueueForProcessing)
             {
-                if (tenantResolution.Status == TenantRoutingStatus.MatchedTenantRoad && tenantResolution.RoadId.HasValue)
-                {
-                    // tenant.road -> create address on one road.
-                    CreateRoadAddressFromEmail(tenantId, tenantResolution.RoadId.Value, email);
-                }
-                else if (tenantResolution.Status == TenantRoutingStatus.Matched)
-                {
-                    // tenant only -> create address on all roads in tenant.
-                    CreateTenantRoadAddressesFromEmail(tenantId, email);
-                }
+                // Route either to one road (tenant.road local-part) or all tenant roads.
+                var routingMode = tenantResolution.Status == TenantRoutingStatus.MatchedTenantRoad
+                    ? InboundEmailRoutingMode.Road
+                    : InboundEmailRoutingMode.Tenant;
+
+                await _processingQueue.QueueAsync(new InboundEmailProcessingRequest(
+                    TenantId: tenantId,
+                    EmailId: processingId,
+                    StoredAs: email.StoredAs!,
+                    RoutingMode: routingMode,
+                    RoadId: tenantResolution.RoadId,
+                    HasSubdomain: tenantResolution.HasSubdomain), context.RequestAborted);
             }
 
             _logger.LogInformation("Encrypted email saved successfully for tenant {TenantId}", tenantId);
@@ -447,7 +531,9 @@ namespace Theatre_TimeLine.Services
                 From: fromEmail,
                 Subject: email.Subject,
                 SpamScore: email.GetSpamScoreValue(),
-                Saved: true);
+                Saved: true,
+                ProcessingId: processingId,
+                QueuedForProcessing: shouldQueueForProcessing);
         }
 
         /// <inheritdoc />
@@ -551,6 +637,64 @@ namespace Theatre_TimeLine.Services
                 access.AllowedTenantIds);
 
             return new EmailListAccessResult(true, visibleFiles);
+        }
+
+        /// <inheritdoc />
+        public async Task<EmailProcessingListAccessResult> TryListProcessingStatusesForAccessAsync(ClaimsPrincipal user, Guid? tenantIdFilter)
+        {
+            var access = await ResolveEmailAccessAsync(user);
+            if (!access.Allowed)
+            {
+                return new EmailProcessingListAccessResult(false, []);
+            }
+
+            if (tenantIdFilter.HasValue && !access.HasGlobalAccess && !access.AllowedTenantIds.Contains(tenantIdFilter.Value))
+            {
+                return new EmailProcessingListAccessResult(false, []);
+            }
+
+            // Build target tenant set from caller scope and optional tenant filter.
+            var tenantIds = tenantIdFilter.HasValue
+                ? [tenantIdFilter.Value]
+                : access.HasGlobalAccess
+                    ? _tenantManagerService.GetTenants().Select(t => t.TenantId).ToArray()
+                    : access.AllowedTenantIds.ToArray();
+
+            var statuses = new List<EmailProcessingStatusSummary>();
+            foreach (var tenantId in tenantIds)
+            {
+                statuses.AddRange(ListProcessingStatusesForTenant(tenantId));
+            }
+
+            IReadOnlyList<EmailProcessingStatusSummary> ordered = statuses
+                .OrderByDescending(status => status.UpdatedAt ?? DateTime.MinValue)
+                .ThenByDescending(status => status.ProcessingId)
+                .Take(200)
+                .ToList();
+
+            return new EmailProcessingListAccessResult(true, ordered);
+        }
+
+        /// <inheritdoc />
+        public async Task<EmailProcessingDetailsAccessResult> TryGetProcessingDetailsForAccessAsync(
+            ClaimsPrincipal user,
+            Guid tenantId,
+            Guid processingId)
+        {
+            var access = await ResolveEmailAccessAsync(user);
+            if (!access.Allowed)
+            {
+                return new EmailProcessingDetailsAccessResult(false, false, null);
+            }
+
+            // Tenant-scoped details are visible to global admins or managers in that tenant.
+            if (!access.HasGlobalAccess && !access.AllowedTenantIds.Contains(tenantId))
+            {
+                return new EmailProcessingDetailsAccessResult(false, false, null);
+            }
+
+            var details = TryReadProcessingDetails(tenantId, processingId);
+            return new EmailProcessingDetailsAccessResult(true, details != null, details);
         }
 
         /// <inheritdoc />
@@ -850,6 +994,214 @@ namespace Theatre_TimeLine.Services
         private string GetTenantEmailStoragePath(Guid tenantId)
         {
             return Path.Combine(_tenantManagerService.GetTenantRootPath(tenantId), "emails");
+        }
+
+        /// <summary>
+        /// Lists processing status summaries for one tenant by reading state artifacts.
+        /// </summary>
+        /// <param name="tenantId">The tenant identifier.</param>
+        /// <returns>Processing status summaries discovered under tenant email artifacts.</returns>
+        private IReadOnlyList<EmailProcessingStatusSummary> ListProcessingStatusesForTenant(Guid tenantId)
+        {
+            var tenantEmailStoragePath = GetTenantEmailStoragePath(tenantId);
+            if (!Directory.Exists(tenantEmailStoragePath))
+            {
+                return [];
+            }
+
+            var summaries = new List<EmailProcessingStatusSummary>();
+
+            // Processing artifacts live at: {tenantRoot}/emails/{processingId}/processing/state.json
+            foreach (var processingDir in Directory.GetDirectories(tenantEmailStoragePath))
+            {
+                var folderName = Path.GetFileName(processingDir);
+                if (!Guid.TryParseExact(folderName, "N", out var processingId))
+                {
+                    continue;
+                }
+
+                var statePath = Path.Combine(processingDir, "processing", "state.json");
+                if (!File.Exists(statePath))
+                {
+                    continue;
+                }
+
+                string? storedAs = null;
+                var referencePath = Path.Combine(processingDir, "raw", "reference.json");
+                if (File.Exists(referencePath))
+                {
+                    try
+                    {
+                        using var referenceStream = File.OpenRead(referencePath);
+                        using var referenceDocument = JsonDocument.Parse(referenceStream);
+                        var referenceRoot = referenceDocument.RootElement;
+                        if (referenceRoot.TryGetProperty("storedAs", out var storedAsNode) && storedAsNode.ValueKind == JsonValueKind.String)
+                        {
+                            storedAs = storedAsNode.GetString();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "Failed to read processing reference for tenant {TenantId}, processing id {ProcessingId}",
+                            tenantId,
+                            folderName);
+                    }
+                }
+
+                try
+                {
+                    using var stream = File.OpenRead(statePath);
+                    using var document = JsonDocument.Parse(stream);
+                    var root = document.RootElement;
+
+                    string status = root.TryGetProperty("status", out var statusNode) && statusNode.ValueKind == JsonValueKind.String
+                        ? statusNode.GetString() ?? "unknown"
+                        : "unknown";
+
+                    int attempt = root.TryGetProperty("attempt", out var attemptNode) && attemptNode.TryGetInt32(out var parsedAttempt)
+                        ? parsedAttempt
+                        : 0;
+
+                    int createdCount = root.TryGetProperty("createdCount", out var createdNode) && createdNode.TryGetInt32(out var parsedCreated)
+                        ? parsedCreated
+                        : 0;
+
+                    int droppedCount = root.TryGetProperty("droppedCount", out var droppedNode) && droppedNode.TryGetInt32(out var parsedDropped)
+                        ? parsedDropped
+                        : 0;
+
+                    DateTime? updatedAt = null;
+                    if (root.TryGetProperty("updatedAt", out var updatedNode) && updatedNode.ValueKind == JsonValueKind.String)
+                    {
+                        var rawUpdated = updatedNode.GetString();
+                        if (DateTimeOffset.TryParse(rawUpdated, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedUpdated))
+                        {
+                            // Persist and compare processing timestamps consistently in UTC.
+                            updatedAt = parsedUpdated.UtcDateTime;
+                        }
+                    }
+                    else if (root.TryGetProperty("queuedAt", out var queuedNode) && queuedNode.ValueKind == JsonValueKind.String)
+                    {
+                        var rawQueued = queuedNode.GetString();
+                        if (DateTimeOffset.TryParse(rawQueued, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedQueued))
+                        {
+                            // Persist and compare processing timestamps consistently in UTC.
+                            updatedAt = parsedQueued.UtcDateTime;
+                        }
+                    }
+
+                    summaries.Add(new EmailProcessingStatusSummary(
+                        TenantId: tenantId,
+                        ProcessingId: processingId,
+                        Status: status,
+                        Attempt: attempt,
+                        CreatedCount: createdCount,
+                        DroppedCount: droppedCount,
+                        UpdatedAt: updatedAt,
+                        StoredAs: storedAs));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to read processing state for tenant {TenantId}, processing id {ProcessingId}",
+                        tenantId,
+                        folderName);
+                }
+            }
+
+            return summaries;
+        }
+
+        /// <summary>
+        /// Attempts to read processing details for one processing artifact folder.
+        /// </summary>
+        /// <param name="tenantId">The tenant that owns the artifact.</param>
+        /// <param name="processingId">The processing identifier folder.</param>
+        /// <returns>The artifact JSON payloads when found; otherwise <see langword="null"/>.</returns>
+        private EmailProcessingDetails? TryReadProcessingDetails(Guid tenantId, Guid processingId)
+        {
+            var artifactRoot = Path.Combine(GetTenantEmailStoragePath(tenantId), processingId.ToString("N"));
+            var fullArtifactRoot = Path.GetFullPath(artifactRoot);
+            var tenantRoot = Path.GetFullPath(GetTenantEmailStoragePath(tenantId));
+
+            // Defense-in-depth: ensure caller-provided identifiers cannot escape tenant scope.
+            if (!fullArtifactRoot.StartsWith(tenantRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (!Directory.Exists(fullArtifactRoot))
+            {
+                return null;
+            }
+
+            var statePath = Path.Combine(fullArtifactRoot, "processing", "state.json");
+            if (!File.Exists(statePath))
+            {
+                return null;
+            }
+
+            var createdPath = Path.Combine(fullArtifactRoot, "outputs", "created.json");
+            var droppedPath = Path.Combine(fullArtifactRoot, "drops", "dropped.json");
+
+            var stateJson = File.ReadAllText(statePath);
+            var createdJson = File.Exists(createdPath) ? File.ReadAllText(createdPath) : "[]";
+            var droppedJson = File.Exists(droppedPath) ? File.ReadAllText(droppedPath) : "[]";
+
+            return new EmailProcessingDetails(stateJson, createdJson, droppedJson);
+        }
+
+        private async Task InitializeProcessingArtifactAsync(
+            Guid tenantId,
+            Guid processingId,
+            string? storedAs,
+            (TenantRoutingStatus Status, Guid? TenantId, Guid? RoadId, bool HasSubdomain) tenantResolution,
+            CancellationToken cancellationToken)
+        {
+            // Nothing to initialize if the encrypted file reference was not produced.
+            if (string.IsNullOrWhiteSpace(storedAs))
+            {
+                return;
+            }
+
+            // Keep processing artifacts directly under tenant emails/{processingId}
+            // so all data for one inbound email can be inspected together.
+            var artifactRoot = Path.Combine(GetTenantEmailStoragePath(tenantId), processingId.ToString("N"));
+            var rawPath = Path.Combine(artifactRoot, "raw");
+            var processingPath = Path.Combine(artifactRoot, "processing");
+            var outputsPath = Path.Combine(artifactRoot, "outputs");
+            var dropsPath = Path.Combine(artifactRoot, "drops");
+
+            // Pre-create folders to avoid race conditions when background workers write outputs.
+            Directory.CreateDirectory(rawPath);
+            Directory.CreateDirectory(processingPath);
+            Directory.CreateDirectory(outputsPath);
+            Directory.CreateDirectory(dropsPath);
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+
+            await using (var rawStream = File.Create(Path.Combine(rawPath, "reference.json")))
+            {
+                // Store immutable routing + storage reference metadata for queue workers.
+                await JsonSerializer.SerializeAsync(rawStream, new
+                {
+                    storedAs,
+                    routedAt = DateTime.UtcNow,
+                    routeStatus = tenantResolution.Status.ToString(),
+                    routeRoadId = tenantResolution.RoadId,
+                    hasSubdomain = tenantResolution.HasSubdomain
+                }, options, cancellationToken);
+            }
+
+            await using var stateStream = File.Create(Path.Combine(processingPath, "state.json"));
+            // Initial state snapshot consumed by diagnostics and operations.
+            await JsonSerializer.SerializeAsync(stateStream, new
+            {
+                status = "queued",
+                attempt = 0,
+                queuedAt = DateTime.UtcNow
+            }, options, cancellationToken);
         }
 
         private static bool TryExtractTenantIdFromFilename(string filename, out Guid tenantId)

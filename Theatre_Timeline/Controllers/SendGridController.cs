@@ -62,6 +62,8 @@ namespace Theatre_TimeLine.Controllers
                 {
                     message = "Email received, validated, encrypted, and saved successfully",
                     file = result.Filename,
+                    processingId = result.ProcessingId,
+                    queuedForProcessing = result.QueuedForProcessing,
                     from = result.From,
                     subject = result.Subject,
                     spamScore = result.SpamScore,
@@ -154,6 +156,70 @@ namespace Theatre_TimeLine.Controllers
                 var errorId = Guid.NewGuid().ToString();
                 _logger.LogError(ex, "Error listing emails. ErrorId: {ErrorId}", errorId);
                 return StatusCode(500, new { error = "Failed to list emails", errorId });
+            }
+        }
+
+        /// <summary>
+        /// Lists asynchronous processing status artifacts for inbound emails.
+        /// Endpoint: GET /api/sendgrid/processing?tenantId={tenantId}
+        /// Requires Global Admin or Tenant Manager (own tenant artifacts only).
+        /// </summary>
+        /// <param name="tenantId">Optional tenant filter. If omitted, returns all processing statuses the caller can access.</param>
+        [HttpGet("processing")]
+        [Authorize]
+        public async Task<IActionResult> ListProcessingStatuses([FromQuery] Guid? tenantId = null)
+        {
+            try
+            {
+                var result = await _sendGridEmailService.TryListProcessingStatusesForAccessAsync(User, tenantId);
+                if (!result.Allowed)
+                {
+                    _logger.LogWarning("Unauthorized access attempt to processing status list");
+                    return Forbid();
+                }
+
+                return Ok(new { count = result.Statuses.Count, statuses = result.Statuses });
+            }
+            catch (Exception ex)
+            {
+                var errorId = Guid.NewGuid().ToString();
+                _logger.LogError(ex, "Error listing processing statuses. ErrorId: {ErrorId}", errorId);
+                return StatusCode(500, new { error = "Failed to list processing statuses", errorId });
+            }
+        }
+
+        /// <summary>
+        /// Gets detailed processing artifacts for a specific inbound email processing run.
+        /// Endpoint: GET /api/sendgrid/processing/{tenantId}/{processingId}
+        /// Requires Global Admin or Tenant Manager (own tenant artifacts only).
+        /// </summary>
+        /// <param name="tenantId">The tenant ID that owns the processing artifact.</param>
+        /// <param name="processingId">The processing ID created at email ingestion time.</param>
+        [HttpGet("processing/{tenantId:guid}/{processingId:guid}")]
+        [Authorize]
+        public async Task<IActionResult> GetProcessingDetails(Guid tenantId, Guid processingId)
+        {
+            try
+            {
+                var result = await _sendGridEmailService.TryGetProcessingDetailsForAccessAsync(User, tenantId, processingId);
+                if (!result.Allowed)
+                {
+                    _logger.LogWarning("Unauthorized access attempt to processing details. TenantId: {TenantId}, ProcessingId: {ProcessingId}", tenantId, processingId);
+                    return Forbid();
+                }
+
+                if (!result.Found || result.Details == null)
+                {
+                    return NotFound(new { error = "Processing details not found" });
+                }
+
+                return Ok(result.Details);
+            }
+            catch (Exception ex)
+            {
+                var errorId = Guid.NewGuid().ToString();
+                _logger.LogError(ex, "Error retrieving processing details. ErrorId: {ErrorId}", errorId);
+                return StatusCode(500, new { error = "Failed to retrieve processing details", errorId });
             }
         }
 

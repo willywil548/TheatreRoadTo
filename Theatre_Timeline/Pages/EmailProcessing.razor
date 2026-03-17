@@ -1,0 +1,238 @@
+@using Microsoft.AspNetCore.Authorization
+@using System.Security.Claims
+@using Theatre_TimeLine.Contracts
+@using Theatre_TimeLine.Services
+@attribute [Authorize]
+@page "/EmailProcessing"
+
+@inject ISendGridEmailService SendGridEmailService
+@inject ITenantManagerService TenantManagerService
+@inject ISecurityGroupService SecurityGroupService
+@inject AuthenticationStateProvider Auth
+
+<MudPaper Class="pa-4">
+    <MudText Typo="Typo.h5">Inbound Email Processing</MudText>
+    <MudDivider Class="my-2" />
+
+    @if (_isLoading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-3" />
+    }
+    else if (!_canManage)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            Only tenant managers and global admins can view processing status.
+        </MudAlert>
+    }
+    else
+    {
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="8" md="6">
+                <MudSelect T="Guid?" Label="Tenant" Dense="true" @bind-Value="_selectedTenantId">
+                    <MudSelectItem T="Guid?" Value="@(null)">All accessible tenants</MudSelectItem>
+                    @foreach (var tenant in _accessibleTenants)
+                    {
+                        <MudSelectItem T="Guid?" Value="@(tenant.TenantId)">@tenant.TenantName (@tenant.TenantId)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" md="3" Class="d-flex align-center">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadStatusesAsync">Refresh</MudButton>
+            </MudItem>
+        </MudGrid>
+
+        @if (_statuses.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                No processing statuses found for the current filter.
+            </MudAlert>
+        }
+        else
+        {
+            <MudTable Items="_statuses" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Updated</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Tenant</MudTh>
+                    <MudTh>Processing Id</MudTh>
+                    <MudTh>Attempt</MudTh>
+                    <MudTh>Created</MudTh>
+                    <MudTh>Dropped</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@(context.UpdatedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>@context.TenantId</MudTd>
+                    <MudTd>@context.ProcessingId</MudTd>
+                    <MudTd>@context.Attempt</MudTd>
+                    <MudTd>@context.CreatedCount</MudTd>
+                    <MudTd>@context.DroppedCount</MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => LoadDetailsAsync(context))">Details</MudButton>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+
+            @if (_detailsLoading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
+            }
+            else if (_selectedStatus != null && _selectedDetails != null)
+            {
+                <MudPaper Class="pa-3 mt-3" Outlined="true">
+                    <MudText Typo="Typo.subtitle1">Processing Details</MudText>
+                    <MudText Typo="Typo.caption">
+                        Tenant: @_selectedStatus.TenantId | Processing: @_selectedStatus.ProcessingId
+                    </MudText>
+
+                    <MudTabs Class="mt-2" Rounded="true" ApplyEffectsToContainer="true">
+                        <MudTabPanel Text="State">
+                            <MudTextField T="string" Value="@_selectedDetails.StateJson" Lines="10" ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudTabPanel>
+                        <MudTabPanel Text="Created">
+                            <MudTextField T="string" Value="@_selectedDetails.CreatedJson" Lines="12" ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudTabPanel>
+                        <MudTabPanel Text="Dropped">
+                            <MudTextField T="string" Value="@_selectedDetails.DroppedJson" Lines="12" ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudTabPanel>
+                    </MudTabs>
+                </MudPaper>
+            }
+        }
+    }
+</MudPaper>
+
+@code {
+    private bool _isLoading = true;
+    private bool _canManage;
+    private Guid? _selectedTenantId;
+    private bool _detailsLoading;
+    private ClaimsPrincipal? _user;
+    private EmailProcessingStatusSummary? _selectedStatus;
+    private EmailProcessingDetails? _selectedDetails;
+
+    private readonly List<ITenantContainer> _accessibleTenants = [];
+    private readonly List<EmailProcessingStatusSummary> _statuses = [];
+
+    /// <summary>
+    /// Loads caller scope and initial processing statuses for tenant managers and global admins.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        _isLoading = true;
+
+        var auth = await Auth.GetAuthenticationStateAsync();
+        _user = auth.User;
+
+        if (_user.Identity?.IsAuthenticated != true)
+        {
+            _canManage = false;
+            _isLoading = false;
+            return;
+        }
+
+        var userEmail = _user.GetEmail();
+        if (string.IsNullOrWhiteSpace(userEmail))
+        {
+            _canManage = false;
+            _isLoading = false;
+            return;
+        }
+
+        // Build tenant visibility from security groups.
+        bool isGlobalAdmin = await SecurityGroupService.IsUserInGroupAsync(userEmail, SecurityGroupNameBuilder.GlobalAdminsGroup);
+        if (isGlobalAdmin)
+        {
+            _accessibleTenants.AddRange(TenantManagerService.GetTenants());
+        }
+        else
+        {
+            foreach (var tenant in TenantManagerService.GetTenants())
+            {
+                if (await SecurityGroupService.IsUserInGroupAsync(userEmail, SecurityGroupNameBuilder.TenantManager(tenant.TenantId)))
+                {
+                    _accessibleTenants.Add(tenant);
+                }
+            }
+        }
+
+        _canManage = _accessibleTenants.Count > 0;
+
+        if (_canManage)
+        {
+            await LoadStatusesAsync();
+        }
+
+        _isLoading = false;
+    }
+
+    /// <summary>
+    /// Refreshes processing statuses from SendGrid service using the current tenant filter.
+    /// </summary>
+    private async Task LoadStatusesAsync()
+    {
+        if (!_canManage || _user == null)
+        {
+            return;
+        }
+
+        // Refreshing the main list clears the selected detail panel to avoid stale artifacts.
+        _selectedStatus = null;
+        _selectedDetails = null;
+
+        var result = await SendGridEmailService.TryListProcessingStatusesForAccessAsync(_user, _selectedTenantId);
+        _statuses.Clear();
+
+        if (result.Allowed)
+        {
+            _statuses.AddRange(result.Statuses);
+        }
+    }
+
+    /// <summary>
+    /// Loads detailed artifact JSON for one processing status row.
+    /// </summary>
+    /// <param name="status">The selected processing status row.</param>
+    private async Task LoadDetailsAsync(EmailProcessingStatusSummary status)
+    {
+        if (!_canManage || _user == null)
+        {
+            return;
+        }
+
+        _detailsLoading = true;
+        _selectedStatus = status;
+
+        try
+        {
+            // Read details through the same service-level access checks used by API endpoints.
+            var result = await SendGridEmailService.TryGetProcessingDetailsForAccessAsync(_user, status.TenantId, status.ProcessingId);
+            _selectedDetails = result.Allowed && result.Found ? result.Details : null;
+        }
+        finally
+        {
+            _detailsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Maps processing state labels to consistent chip colors.
+    /// </summary>
+    private static Color GetStatusColor(string status)
+    {
+        return status.ToLowerInvariant() switch
+        {
+            "completed" => Color.Success,
+            "processing" => Color.Primary,
+            "queued" => Color.Info,
+            "retryable-failure" => Color.Warning,
+            "failed" => Color.Error,
+            _ => Color.Default
+        };
+    }
+}
