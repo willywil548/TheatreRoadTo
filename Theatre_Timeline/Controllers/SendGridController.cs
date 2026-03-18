@@ -34,7 +34,7 @@ namespace Theatre_TimeLine.Controllers
         [HttpPost("inbound")]
         [AllowAnonymous]  // SendGrid webhooks need anonymous access
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> ReceiveInboundEmail([FromForm] SendGridInboundEmail email)
+        public async Task<IActionResult> ReceiveInboundEmail([FromForm][ModelBinder(Name = "")] SendGridInboundEmail email)
         {
             try
             {
