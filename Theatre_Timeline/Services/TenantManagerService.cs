@@ -22,6 +22,8 @@ namespace Theatre_TimeLine.Services
         public string DemoTenantId { get; }
 
         private const string HomeVariable = "%home%";
+        private const string HomeVariableUnix = "$home";
+        private const string HomeVariableUnixBraced = "${home}";
         private static readonly SemaphoreSlim writeManager = new(1, 1);
         private const string dataPathConfigKey = "TenantManager:DataPath";
         private const string demoTenantIdConfigKey = "TenantManager:DemoTenantId";
@@ -47,39 +49,124 @@ namespace Theatre_TimeLine.Services
             this.DemoTenantId = configuration.GetValue<string>(demoTenantIdConfigKey) ?? DefaultDemoGuid;
 
             string? dataPath = configuration.GetValue<string>(dataPathConfigKey);
+            LogInfo($"Configured data path value: '{dataPath ?? "<null>"}'");
             if (string.IsNullOrEmpty(dataPath))
             {
-                dataPath = "./webapps/data";
+                // Default to HOME-based storage to preserve data across App Service publishes.
+                dataPath = "%home%/webapps/data";
+                LogInfo($"Data path config missing; defaulting to '{dataPath}'.");
             }
 
-            if (dataPath.StartsWith(HomeVariable, StringComparison.OrdinalIgnoreCase))
-            {
-                string home = Environment.GetEnvironmentVariable("home") ?? ".";
-                string homePath = Path.GetFullPath(home);
-                dataPath = dataPath.Replace(home, string.Empty);
-                dataPath = Path.Combine(homePath, dataPath.Trim(new char[] { '/', '\\' }));
-            }
+            dataPath = ResolveHomePathPrefix(dataPath);
+            LogInfo($"Data path after HOME token resolution: '{dataPath}'");
 
             if (!Path.IsPathRooted(dataPath))
             {
+                // Relative paths resolve under app binaries/content, which can be replaced on publish.
+                LogInfo($"Data path is still relative; resolving against AppDomain base path '{AppDomain.CurrentDomain.BaseDirectory}'.");
                 dataPath = Path.Combine(
                     AppDomain.CurrentDomain.BaseDirectory,
                     dataPath.Trim(new[] { '.', '\\', '/' }));
             }
 
             this.dataPath = dataPath;
+            LogInfo($"Final tenant data path: '{this.dataPath}'");
 
             // Ensure base data path exists
-            if (!Directory.Exists(this.dataPath))
-            {
-                Directory.CreateDirectory(this.dataPath);
-            }
+            Directory.CreateDirectory(this.dataPath);
 
             // Ensure demo tenant exists and is fresh
             EnsureDemoDataFresh();
 
             // Ensure existing demo video addresses have valid YouTube URLs from configuration
             EnsureDemoVideoLinksApplied();
+        }
+
+        /// <summary>
+        /// Resolves configured path values that begin with a home-directory token
+        /// into a concrete absolute path for both Windows and Linux hosting.
+        /// </summary>
+        /// <param name="configuredPath">Configured path value.</param>
+        /// <returns>The resolved path value.</returns>
+        private static string ResolveHomePathPrefix(string configuredPath)
+        {
+            if (string.IsNullOrWhiteSpace(configuredPath))
+            {
+                return configuredPath;
+            }
+
+            // Support legacy token (%home%) and Unix-friendly tokens ($home, ${home}, ~).
+            int homeTokenLength = configuredPath.StartsWith(HomeVariable, StringComparison.OrdinalIgnoreCase)
+                ? HomeVariable.Length
+                : configuredPath.StartsWith(HomeVariableUnixBraced, StringComparison.OrdinalIgnoreCase)
+                    ? HomeVariableUnixBraced.Length
+                    : configuredPath.StartsWith(HomeVariableUnix, StringComparison.OrdinalIgnoreCase)
+                        ? HomeVariableUnix.Length
+                        : configuredPath.StartsWith("~", StringComparison.Ordinal)
+                            ? 1
+                            : 0;
+
+            if (homeTokenLength == 0)
+            {
+                return configuredPath;
+            }
+
+            string home = GetHomeDirectory();
+            if (string.IsNullOrWhiteSpace(home))
+            {
+                LogInfo($"Detected HOME token in data path '{configuredPath}', but no HOME/USERPROFILE env var was available.");
+                return configuredPath;
+            }
+
+            string relativePath = configuredPath[homeTokenLength..].Trim(['\\', '/']);
+            string rootHomePath = Path.GetFullPath(home);
+
+            // Return HOME itself when only the token is provided.
+            return string.IsNullOrWhiteSpace(relativePath)
+                ? rootHomePath
+                : Path.Combine(rootHomePath, relativePath);
+        }
+
+        /// <summary>
+        /// Writes startup diagnostics to output streams visible in local and App Service logs.
+        /// </summary>
+        /// <param name="message">The message to write.</param>
+        private static void LogInfo(string message)
+        {
+            var formattedMessage = $"[TenantManagerService] {message}";
+
+            // Console output is surfaced by Azure App Service log streaming when enabled.
+            Console.WriteLine(formattedMessage);
+
+            // Trace output supports local diagnostics and any configured trace listeners.
+            Trace.WriteLine(formattedMessage);
+        }
+
+        /// <summary>
+        /// Gets the current process home directory in a cross-platform-safe way.
+        /// </summary>
+        /// <returns>The discovered home directory path, or an empty string if unavailable.</returns>
+        private static string GetHomeDirectory()
+        {
+            // Linux/macOS generally expose HOME; Windows commonly exposes USERPROFILE.
+            string? home = Environment.GetEnvironmentVariable("HOME")
+                ?? Environment.GetEnvironmentVariable("home")
+                ?? Environment.GetEnvironmentVariable("USERPROFILE");
+
+            if (!string.IsNullOrWhiteSpace(home))
+            {
+                return home;
+            }
+
+            // Last-resort Windows fallback.
+            string? homeDrive = Environment.GetEnvironmentVariable("HOMEDRIVE");
+            string? homePath = Environment.GetEnvironmentVariable("HOMEPATH");
+            if (!string.IsNullOrWhiteSpace(homeDrive) && !string.IsNullOrWhiteSpace(homePath))
+            {
+                return string.Concat(homeDrive, homePath);
+            }
+
+            return string.Empty;
         }
 
         /// <inheritdoc />

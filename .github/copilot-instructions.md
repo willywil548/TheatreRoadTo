@@ -1,7 +1,7 @@
 # Copilot Instructions
 
 ## Project Guidelines
-- When user asks to 'review the project', provide analysis only and do not implement or modify files unless explicitly instructed.
+- When user asks to 'review the project', provide analysis only and do not implement or modify files unless explicitly instructed. Confirm with the user before making any code changes; do not implement fixes unless explicitly asked.
 
 ## Code Documentation
 - Add XML documentation comments for internal and public accessors when creating or modifying code.
