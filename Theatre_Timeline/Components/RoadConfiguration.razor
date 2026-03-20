@@ -1,4 +1,5 @@
 ﻿@using System.Diagnostics
+@using Cropper.Blazor.Exceptions
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
 @using Theatre_TimeLine.Services
@@ -12,9 +13,9 @@
 @inject IConfiguration Configuration
 @inject ITenantManagerService TenantManagerService
 
-<MudCard>
+<MudCard Style="overflow: visible;">
     <MudCardHeader Class="card card-header">@this.Road.ToString()</MudCardHeader>
-    <MudCardContent>
+    <MudCardContent Style="overflow: visible; padding-bottom: 2rem;">
         <h6>ID: @Road.RoadId</h6>
         <MudDatePicker Label="Start Date" @bind-Date="startTime" />
         <MudTextField @bind-Value="Road.Title" Label="Title" Variant="Variant.Text"></MudTextField>
@@ -42,7 +43,8 @@
         <!-- Add picture as a banner -->
         @if (bannerFilePath != null)
         {
-            <div class="img-container">
+            @* Keep cropper controls fully reachable when used inside expansion panels. *@
+            <div class="img-container" style="overflow: auto; max-height: 75vh; padding-bottom: 1rem;">
                 <CropperComponent Class="big-img" Src="@bannerFilePath" @ref="cropperComponent" Options="cropperOptions" />
             </div>
 
@@ -126,7 +128,9 @@
         };
 
     private CropperComponent? cropperComponent = null!;
-    private string? croppedCanvasDataURL;
+    private byte[]? croppedCanvasData;
+    private string? croppedCanvasDataURL = null;
+    private string? fileExtension;
 
     private string? bannerFilePath = null;
     private Address address = new Address();
@@ -213,7 +217,26 @@
                 ImageSmoothingQuality = ImageSmoothingQuality.High.ToEnumString()
             };
 
-        croppedCanvasDataURL = await cropperComponent!.GetCroppedCanvasDataURLAsync(getCroppedCanvasOptions);
+        // Call the cropper component to get the cropped canvas image
+        ImageReceiver imageReceiver = await cropperComponent!.GetCroppedCanvasDataInBackgroundAsync(getCroppedCanvasOptions);
+
+        try
+        {
+            // Retrieve the image stream from the receiver
+            using MemoryStream croppedCanvasDataStream = await imageReceiver.GetImageChunkStreamAsync();
+
+            // Convert the stream to a byte array
+            croppedCanvasData = croppedCanvasDataStream.ToArray();
+            croppedCanvasDataURL = $"data:image/{this.fileExtension};base64,{Convert.ToBase64String(croppedCanvasData)}";
+        }
+        catch (ImageProcessingException imageProcessingEx)
+        {
+            // Handle any image processing errors (currently empty - consider logging or rethrowing)
+        }
+        catch (Exception ex)
+        {
+
+        }
     }
 
     private void ScopeChanged()
@@ -293,6 +316,7 @@
         bannerFilePath = tempFileName.Replace(
             Path.Combine(webRootPath),
             string.Empty).Replace("\\", "/");
+        this.fileExtension = fileExtension.Trim('.');
         Snackbar.Add("File uploaded. Please crop and accept.", Severity.Success);
 
         await Task.CompletedTask;
@@ -300,15 +324,73 @@
 
     private void SaveBanner()
     {
-        if (croppedCanvasDataURL == null)
+        if (string.IsNullOrWhiteSpace(croppedCanvasDataURL))
         {
             return;
         }
 
-        Road.Banner = croppedCanvasDataURL;
-        TenantManagerService.SaveRoad(Road);
-        croppedCanvasDataURL = null;
-        this.bannerFilePath = null;
-        this.StateHasChanged();
+        try
+        {
+            // Encode the image data as a base64 data URL for use in HTML
+            string savePath = Path.Combine(
+                this.webRootPath,
+                Road.TenantId.ToString(),
+                Road.RoadId.ToString(),
+                "images");
+            string relativeSavePath = Path.Combine(
+                TenantManagerService.RelativeDataPath,
+                Road.TenantId.ToString(),
+                Road.RoadId.ToString(),
+                "images");
+
+            Directory.CreateDirectory(savePath);
+
+            // Keep only one canonical banner file per road to avoid stale images.
+            DeleteExistingBannerFiles(savePath);
+
+            string bannerFileName = $"banner.{this.fileExtension}";
+            string bannerPhysicalPath = Path.Combine(savePath, bannerFileName);
+            string systemPath = Path.GetFullPath(bannerPhysicalPath);
+            File.WriteAllBytes(systemPath, this.croppedCanvasData ?? []);
+
+            // Store only the web path to avoid persisting large data URLs in road configuration JSON.
+            Road.Banner = $"{relativeSavePath}/{bannerFileName}";
+
+            TenantManagerService.SaveRoad(Road);
+            DeleteTemporaryUploadFile();
+
+            croppedCanvasDataURL = null;
+            this.bannerFilePath = null;
+            this.StateHasChanged();
+            Snackbar.Add("Banner image saved.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"Failed to save banner image: {ex.Message}");
+            Snackbar.Add("Failed to save banner image.", Severity.Error);
+        }
+    }
+
+    private static void DeleteExistingBannerFiles(string bannerDirectory)
+    {
+        foreach (string existingBanner in Directory.EnumerateFiles(bannerDirectory, "banner.*", SearchOption.TopDirectoryOnly))
+        {
+            File.Delete(existingBanner);
+        }
+    }
+
+    private void DeleteTemporaryUploadFile()
+    {
+        if (string.IsNullOrWhiteSpace(this.bannerFilePath))
+        {
+            return;
+        }
+
+        string tempRelativePath = this.bannerFilePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        string tempPhysicalPath = Path.Combine(this.webRootPath, tempRelativePath);
+        if (File.Exists(tempPhysicalPath))
+        {
+            File.Delete(tempPhysicalPath);
+        }
     }
 }

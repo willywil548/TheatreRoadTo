@@ -27,6 +27,7 @@ namespace Theatre_TimeLine.Services
         private const string demoTenantIdConfigKey = "TenantManager:DemoTenantId";
         private const string tenantConfigurationFile = "TenantConfiguration.json";
         private readonly string dataPath;
+        private readonly string _contentRootPath;
         private readonly ISecurityGroupService? _securityGroups;
         private readonly string[] _demoYouTubeLinks;
 
@@ -37,11 +38,17 @@ namespace Theatre_TimeLine.Services
         /// Initializes a new instance of <see cref="TenantManagerService"/>.
         /// </summary>
         /// <param name="configuration">The application configuration.</param>
+        /// <param name="environment">The host environment used to resolve stable content-root relative paths.</param>
         /// <param name="securityGroups">Optional: security group service to ensure groups upon tenant/road creation.</param>
-        public TenantManagerService(IConfiguration configuration, ISecurityGroupService? securityGroups = null)
+        public TenantManagerService(
+            IConfiguration configuration,
+            IWebHostEnvironment environment,
+            ISecurityGroupService? securityGroups = null)
         {
             this._securityGroups = securityGroups;
             this._demoYouTubeLinks = LoadDemoYouTubeLinks(configuration);
+            // Always use ContentRootPath as the base for all data and static file operations
+            this._contentRootPath = environment.ContentRootPath;
 
             // Read demo tenant ID from configuration or use default
             this.DemoTenantId = configuration.GetValue<string>(demoTenantIdConfigKey) ?? DefaultDemoGuid;
@@ -49,7 +56,8 @@ namespace Theatre_TimeLine.Services
             string? dataPath = configuration.GetValue<string>(dataPathConfigKey);
             if (string.IsNullOrEmpty(dataPath))
             {
-                dataPath = "./webapps/data";
+                // Default to wwwroot/Data for static file serving
+                dataPath = Path.Combine("wwwroot", "Data");
             }
 
             if (dataPath.StartsWith(HomeVariable, StringComparison.OrdinalIgnoreCase))
@@ -62,8 +70,10 @@ namespace Theatre_TimeLine.Services
 
             if (!Path.IsPathRooted(dataPath))
             {
+                // Resolve non-rooted data paths from content root so demo/runtime artifacts
+                // are not created inside bin/Debug during local development.
                 dataPath = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
+                    this._contentRootPath,
                     dataPath.Trim(new[] { '.', '\\', '/' }));
             }
 
@@ -81,6 +91,11 @@ namespace Theatre_TimeLine.Services
             // Ensure existing demo video addresses have valid YouTube URLs from configuration
             EnsureDemoVideoLinksApplied();
         }
+
+        /// <summary>
+        /// Get the relative path to data root.
+        /// </summary>
+        public string RelativeDataPath => Path.GetRelativePath(this._contentRootPath, this.dataPath);
 
         /// <inheritdoc />
         public void CreateTenant(ITenantContainer tenant)

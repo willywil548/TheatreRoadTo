@@ -7,6 +7,8 @@ namespace Theatre_TimeLine.Contracts
     /// </summary>
     public interface ITenantManagerService : IRoadToThereManager
     {
+        string RelativeDataPath { get; }
+
         /// <summary>
         /// Gets the root file system path for a tenant's data.
         /// </summary>

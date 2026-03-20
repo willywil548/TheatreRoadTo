@@ -23,3 +23,5 @@
 /Theatre_Timeline/.config/dotnet-tools.json
 /Theatre_Timeline/wwwroot/tenants/_tokens
 /Theatre_Timeline/wwwroot/.well-known/microsoft-identity-association.json
+/Theatre_Timeline/Webapp/Data
+*.pubxml

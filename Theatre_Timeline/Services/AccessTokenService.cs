@@ -120,6 +120,7 @@ namespace Theatre_TimeLine.Services
         private static readonly ActivitySource ActivitySource = new(ActivitySourceName);
         
         private readonly string _storagePath;
+        private readonly string _contentRootPath;
         private readonly ILogger<AccessTokenService> _logger;
         private readonly IConfiguration _configuration;
         private readonly SemaphoreSlim _lock = new(1, 1);
@@ -130,10 +131,12 @@ namespace Theatre_TimeLine.Services
 
         public AccessTokenService(
             IConfiguration configuration,
+            IWebHostEnvironment environment,
             ILogger<AccessTokenService> logger)
         {
             _configuration = configuration;
             _logger = logger;
+            _contentRootPath = environment.ContentRootPath;
 
             // Store tokens alongside tenant data using the same path configuration
             var basePath = configuration.GetValue<string>("TenantManager:DataPath") ?? "./data";
@@ -150,7 +153,8 @@ namespace Theatre_TimeLine.Services
 
             if (!Path.IsPathRooted(basePath))
             {
-                basePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, basePath.TrimStart('.', '/', '\\'));
+                // Resolve non-rooted path from content root to avoid storing tokens under bin/Debug.
+                basePath = Path.Combine(_contentRootPath, basePath.TrimStart('.', '/', '\\'));
             }
 
             // Tokens are stored inside each tenant's folder as {tenantId}/_tokens/{tokenId}.json
