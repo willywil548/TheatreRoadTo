@@ -138,27 +138,39 @@ namespace Theatre_TimeLine.Services
             _logger = logger;
             _contentRootPath = environment.ContentRootPath;
 
-            // Store tokens alongside tenant data using the same path configuration
-            var basePath = configuration.GetValue<string>("TenantManager:DataPath") ?? "./data";
-            
-            // Handle %home% variable (same as TenantManagerService)
-            const string homeVariable = "%home%";
-            if (basePath.StartsWith(homeVariable, StringComparison.OrdinalIgnoreCase))
-            {
-                var home = Environment.GetEnvironmentVariable("home") ?? ".";
-                var homePath = Path.GetFullPath(home);
-                basePath = basePath.Replace(homeVariable, string.Empty, StringComparison.OrdinalIgnoreCase);
-                basePath = Path.Combine(homePath, basePath.Trim('/', '\\'));
-            }
+            // Determine web root path and ensure tokens live under webroot/Data for unified access.
+            var webRootPath = string.IsNullOrEmpty(environment.WebRootPath)
+                ? Path.Combine(_contentRootPath, "wwwroot")
+                : environment.WebRootPath;
 
-            if (!Path.IsPathRooted(basePath))
+            // Store tokens under the same tenant data root used by TenantManagerService.
+            var configured = configuration.GetValue<string>("TenantManager:DataPath");
+            string basePath;
+            if (string.IsNullOrWhiteSpace(configured))
             {
-                // Resolve non-rooted path from content root to avoid storing tokens under bin/Debug.
-                basePath = Path.Combine(_contentRootPath, basePath.TrimStart('.', '/', '\\'));
+                basePath = Path.Combine(webRootPath, "Data");
+            }
+            else
+            {
+                // If relative, interpret relative to webroot. If absolute but outside webroot,
+                // coerce into webroot to keep a single serving location.
+                basePath = configured;
+                if (!Path.IsPathRooted(basePath))
+                {
+                    basePath = Path.Combine(webRootPath, basePath.Trim(new[] { '.', '/', '\\' }));
+                }
+
+                var fullBase = Path.GetFullPath(basePath);
+                if (!fullBase.StartsWith(webRootPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    var folderName = Path.GetFileName(fullBase.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    if (string.IsNullOrEmpty(folderName)) folderName = "Data";
+                    basePath = Path.Combine(webRootPath, folderName);
+                }
             }
 
             // Tokens are stored inside each tenant's folder as {tenantId}/_tokens/{tokenId}.json
-            _storagePath = basePath;
+            _storagePath = Path.GetFullPath(basePath);
 
             _logger.LogInformation("Token storage base path: {Path}", _storagePath);
         }

@@ -25,3 +25,4 @@
 /Theatre_Timeline/wwwroot/.well-known/microsoft-identity-association.json
 /Theatre_Timeline/Webapp/Data
 *.pubxml
+/Theatre_Timeline/wwwroot/Webapp/Data

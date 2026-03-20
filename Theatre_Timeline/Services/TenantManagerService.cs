@@ -28,6 +28,7 @@ namespace Theatre_TimeLine.Services
         private const string tenantConfigurationFile = "TenantConfiguration.json";
         private readonly string dataPath;
         private readonly string _contentRootPath;
+        private readonly string _webRootPath;
         private readonly ISecurityGroupService? _securityGroups;
         private readonly string[] _demoYouTubeLinks;
 
@@ -47,19 +48,29 @@ namespace Theatre_TimeLine.Services
         {
             this._securityGroups = securityGroups;
             this._demoYouTubeLinks = LoadDemoYouTubeLinks(configuration);
-            // Always use ContentRootPath as the base for all data and static file operations
+            // Always use ContentRootPath as the stable project root for resolving non-web paths
             this._contentRootPath = environment.ContentRootPath;
+            // Capture the actual wwwroot physical path provided by the host environment.
+            // This ensures tenant/static data can be created under the application's web root
+            // so static file middleware will serve uploaded assets.
+            this._webRootPath = string.IsNullOrEmpty(environment.WebRootPath)
+                ? Path.Combine(this._contentRootPath, "wwwroot")
+                : environment.WebRootPath;
 
             // Read demo tenant ID from configuration or use default
             this.DemoTenantId = configuration.GetValue<string>(demoTenantIdConfigKey) ?? DefaultDemoGuid;
 
             string? dataPath = configuration.GetValue<string>(dataPathConfigKey);
+
+            // Always place tenant data under the application's web root to ensure
+            // uploaded assets are directly available to the static file middleware.
+            // We will canonicalize the configured path to a location under _webRootPath.
             if (string.IsNullOrEmpty(dataPath))
             {
-                // Default to wwwroot/Data for static file serving
-                dataPath = Path.Combine("wwwroot", "Data");
+                dataPath = Path.Combine(this._webRootPath, "Data");
             }
 
+            // Expand %home% if present (rare for local dev in this project)
             if (dataPath.StartsWith(HomeVariable, StringComparison.OrdinalIgnoreCase))
             {
                 string home = Environment.GetEnvironmentVariable("home") ?? ".";
@@ -68,16 +79,25 @@ namespace Theatre_TimeLine.Services
                 dataPath = Path.Combine(homePath, dataPath.Trim(new char[] { '/', '\\' }));
             }
 
+            // If the configured path is not rooted, interpret it relative to the web root.
             if (!Path.IsPathRooted(dataPath))
             {
-                // Resolve non-rooted data paths from content root so demo/runtime artifacts
-                // are not created inside bin/Debug during local development.
-                dataPath = Path.Combine(
-                    this._contentRootPath,
-                    dataPath.Trim(new[] { '.', '\\', '/' }));
+                dataPath = Path.Combine(this._webRootPath, dataPath.Trim(new[] { '.', '\\', '/' }));
             }
 
-            this.dataPath = dataPath;
+            // If an absolute path was provided but it is not under the web root,
+            // coerce it into the web root to ensure a single serving location.
+            // This avoids serving files from unexpected locations.
+            string fullDataPath = Path.GetFullPath(dataPath);
+            if (!fullDataPath.StartsWith(this._webRootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                // Use the last segment of the configured path as a folder name under webroot.
+                string folderName = Path.GetFileName(fullDataPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (string.IsNullOrEmpty(folderName)) folderName = "Data";
+                fullDataPath = Path.Combine(this._webRootPath, folderName);
+            }
+
+            this.dataPath = fullDataPath;
 
             // Ensure base data path exists
             if (!Directory.Exists(this.dataPath))
@@ -93,9 +113,17 @@ namespace Theatre_TimeLine.Services
         }
 
         /// <summary>
-        /// Get the relative path to data root.
+        /// Get the path to the data root relative to the web root (wwwroot).
+        /// This should be used when constructing web URLs for static assets.
         /// </summary>
-        public string RelativeDataPath => Path.GetRelativePath(this._contentRootPath, this.dataPath);
+        public string RelativeDataPath => Path.GetRelativePath(this._webRootPath, this.dataPath).Replace("\\", "/");
+
+        /// <summary>
+        /// Gets the path to the data folder relative to the web root (wwwroot).
+        /// This is intended for building web-accessible URLs for static assets.
+        /// Returned value uses forward slashes suitable for URLs.
+        /// </summary>
+        public string WebDataPath => Path.GetRelativePath(this._webRootPath, this.dataPath).Replace("\\", "/");
 
         /// <inheritdoc />
         public void CreateTenant(ITenantContainer tenant)
