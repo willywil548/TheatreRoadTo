@@ -70,13 +70,65 @@ namespace Theatre_TimeLine.Services
                 dataPath = Path.Combine(this._webRootPath, "Data");
             }
 
-            // Expand %home% if present (rare for local dev in this project)
+            // If config references %home%, create a junction from the expanded home location
+            // to the canonical web-root data folder so external tooling referencing
+            // %home%/Webapp/Data will see the same files as the application's wwwroot/Data.
             if (dataPath.StartsWith(HomeVariable, StringComparison.OrdinalIgnoreCase))
             {
                 string home = Environment.GetEnvironmentVariable("home") ?? ".";
                 string homePath = Path.GetFullPath(home);
-                dataPath = dataPath.Replace(home, string.Empty);
-                dataPath = Path.Combine(homePath, dataPath.Trim(new char[] { '/', '\\' }));
+
+                // remainder after %home% (e.g. "/Webapp/Data")
+                string remainder = dataPath.Substring(HomeVariable.Length).Trim(new char[] { '/', '\\' });
+
+                // Expanded path where other tools expect the data to be.
+                string expandedHomeDataPath = Path.Combine(homePath, remainder);
+
+                // Canonical data location under the app web root
+                string canonicalWebDataPath = Path.Combine(this._webRootPath, "Data");
+
+                try
+                {
+                    // Ensure canonical exists
+                    Directory.CreateDirectory(canonicalWebDataPath);
+
+                    // If expanded path doesn't exist, attempt to create a junction pointing to canonical
+                    if (!Directory.Exists(expandedHomeDataPath))
+                    {
+                        // Ensure parent exists
+                        var parent = Path.GetDirectoryName(expandedHomeDataPath);
+                        if (!string.IsNullOrEmpty(parent) && !Directory.Exists(parent))
+                        {
+                            Directory.CreateDirectory(parent);
+                        }
+
+                        // Create a directory junction (mklink /J) - works on most Windows dev setups
+                        var psi = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{expandedHomeDataPath}\" \"{canonicalWebDataPath}\"")
+                        {
+                            CreateNoWindow = true,
+                            UseShellExecute = false,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
+                        };
+
+                        using (var proc = Process.Start(psi))
+                        {
+                            proc?.WaitForExit();
+                            if (proc != null && proc.ExitCode != 0)
+                            {
+                                var err = proc.StandardError.ReadToEnd();
+                                Trace.WriteLine($"Failed to create junction {expandedHomeDataPath} -> {canonicalWebDataPath}: {err}");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Trace.WriteLine($"Failed to ensure home junction for tenant data: {ex.Message}");
+                }
+
+                // Regardless of success creating the junction, use the canonical web-root data path
+                dataPath = Path.Combine(this._webRootPath, "Data");
             }
 
             // If the configured path is not rooted, interpret it relative to the web root.
