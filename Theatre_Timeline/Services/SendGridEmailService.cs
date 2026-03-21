@@ -18,6 +18,33 @@ namespace Theatre_TimeLine.Services
     }
 
     /// <summary>
+    /// Event args for inbound email processing status transitions.
+    /// </summary>
+    /// <param name="tenantId">Tenant that owns the processing run.</param>
+    /// <param name="processingId">Processing identifier for the inbound email.</param>
+    /// <param name="status">Latest processing status value.</param>
+    public sealed class EmailProcessingStatusChangedEventArgs(
+        Guid tenantId,
+        Guid processingId,
+        string status) : EventArgs
+    {
+        /// <summary>
+        /// Gets the tenant identifier that owns the processing run.
+        /// </summary>
+        public Guid TenantId { get; } = tenantId;
+
+        /// <summary>
+        /// Gets the processing identifier for the inbound email.
+        /// </summary>
+        public Guid ProcessingId { get; } = processingId;
+
+        /// <summary>
+        /// Gets the latest processing status value.
+        /// </summary>
+        public string Status { get; } = status;
+    }
+
+    /// <summary>
     /// Represents the result of attempting to get a stored email for a caller.
     /// </summary>
     /// <param name="Allowed">Whether the caller is authorized to read the requested email.</param>
@@ -92,6 +119,11 @@ namespace Theatre_TimeLine.Services
         /// Raised when an inbound email is successfully ingested and persisted.
         /// </summary>
         event EventHandler<EmailIngestedEventArgs>? InboundEmailIngested;
+
+        /// <summary>
+        /// Raised when background processing updates an inbound email processing state.
+        /// </summary>
+        event EventHandler<EmailProcessingStatusChangedEventArgs>? InboundEmailProcessingStatusChanged;
 
         /// <summary>
         /// Validates, routes, and conditionally persists an inbound SendGrid email.
@@ -294,6 +326,8 @@ namespace Theatre_TimeLine.Services
     {
         public event EventHandler<EmailIngestedEventArgs>? InboundEmailIngested;
 
+        public event EventHandler<EmailProcessingStatusChangedEventArgs>? InboundEmailProcessingStatusChanged;
+
         [GeneratedRegex(@"[\r\n\t\x00-\x1F\x7F]", RegexOptions.Compiled)]
         private static partial Regex LogSanitizationRegex();
 
@@ -333,12 +367,27 @@ namespace Theatre_TimeLine.Services
             _securityGroupService = securityGroupService;
             _tenantManagerService = tenantManagerService;
 
+            // Bridge queue-level status updates to consumers of this service.
+            _processingQueue.ProcessingStatusChanged += OnProcessingQueueStatusChanged;
+
             var demoTenantId = _configuration.GetValue<string>("TenantManager:DemoTenantId")
                 ?? TenantManagerService.DefaultDemoGuid;
 
             _demoTenantId = Guid.TryParse(demoTenantId, out var parsedDemoTenantId)
                 ? parsedDemoTenantId
                 : null;
+        }
+
+        /// <summary>
+        /// Handles queue processing status updates and forwards them through the service event contract.
+        /// </summary>
+        /// <param name="sender">The queue event sender.</param>
+        /// <param name="e">Processing status event payload.</param>
+        private void OnProcessingQueueStatusChanged(object? sender, InboundEmailProcessingStatusChangedEventArgs e)
+        {
+            InboundEmailProcessingStatusChanged?.Invoke(
+                this,
+                new EmailProcessingStatusChangedEventArgs(e.TenantId, e.EmailId, e.Status));
         }
 
         /// <inheritdoc />

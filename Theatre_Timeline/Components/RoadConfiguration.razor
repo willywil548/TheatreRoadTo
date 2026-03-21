@@ -1,4 +1,5 @@
 ﻿@using System.Diagnostics
+@using Cropper.Blazor.Exceptions
 @using Theatre_TimeLine.Contracts
 @using Theatre_TimeLine.Models
 @using Theatre_TimeLine.Services
@@ -12,9 +13,9 @@
 @inject IConfiguration Configuration
 @inject ITenantManagerService TenantManagerService
 
-<MudCard>
+<MudCard Style="overflow: visible;">
     <MudCardHeader Class="card card-header">@this.Road.ToString()</MudCardHeader>
-    <MudCardContent>
+    <MudCardContent Style="overflow: visible; padding-bottom: 2rem;">
         <h6>ID: @Road.RoadId</h6>
         <MudDatePicker Label="Start Date" @bind-Date="startTime" />
         <MudTextField @bind-Value="Road.Title" Label="Title" Variant="Variant.Text"></MudTextField>
@@ -42,7 +43,8 @@
         <!-- Add picture as a banner -->
         @if (bannerFilePath != null)
         {
-            <div class="img-container">
+            @* Keep cropper controls fully reachable when used inside expansion panels. *@
+            <div class="img-container" style="overflow: auto; max-height: 75vh; padding-bottom: 1rem;">
                 <CropperComponent Class="big-img" Src="@bannerFilePath" @ref="cropperComponent" Options="cropperOptions" />
             </div>
 
@@ -126,8 +128,13 @@
         };
 
     private CropperComponent? cropperComponent = null!;
-    private string? croppedCanvasDataURL;
+    private byte[]? croppedCanvasData;
+    private string? croppedCanvasDataURL = null;
+    private string? fileExtension;
 
+    // Physical temp folder for uploads (absolute filesystem path)
+    private string? tempPicturePhysicalPath = null;
+    // Web-accessible path used by the cropper (e.g. "/Data/{tenant}/{road}/temp/file.png")
     private string? bannerFilePath = null;
     private Address address = new Address();
 
@@ -174,20 +181,18 @@
         }
     }
 
-    private string webRootPath = string.Empty;
     private long maxAllowedSize;
     private string bannerAllowFiletypes = string.Empty;
 
     protected override Task OnInitializedAsync()
     {
-        string? webRootPath = Configuration["TenantManager:WebRootPath"];
+        // Ensure physical temp directory under tenant root exists
+        this.tempPicturePhysicalPath = Path.Combine(
+            TenantManagerService.GetTenantRootPath(Road.TenantId),
+            Road.RoadId.ToString(),
+            "temp");
 
-        if (string.IsNullOrEmpty(webRootPath))
-        {
-            webRootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
-        }
-
-        this.webRootPath = webRootPath;
+        Directory.CreateDirectory(this.tempPicturePhysicalPath);
 
         // MB value for max file size
         this.maxAllowedSize = Configuration.GetValue<long>("TenantManager:MaxFileSizeMB", 10) * 1024 * 1024; // Default to 10 MB
@@ -213,7 +218,26 @@
                 ImageSmoothingQuality = ImageSmoothingQuality.High.ToEnumString()
             };
 
-        croppedCanvasDataURL = await cropperComponent!.GetCroppedCanvasDataURLAsync(getCroppedCanvasOptions);
+        // Call the cropper component to get the cropped canvas image
+        ImageReceiver imageReceiver = await cropperComponent!.GetCroppedCanvasDataInBackgroundAsync(getCroppedCanvasOptions);
+
+        try
+        {
+            // Retrieve the image stream from the receiver
+            using MemoryStream croppedCanvasDataStream = await imageReceiver.GetImageChunkStreamAsync();
+
+            // Convert the stream to a byte array
+            croppedCanvasData = croppedCanvasDataStream.ToArray();
+            croppedCanvasDataURL = $"data:image/{this.fileExtension};base64,{Convert.ToBase64String(croppedCanvasData)}";
+        }
+        catch (ImageProcessingException imageProcessingEx)
+        {
+            // Handle any image processing errors (currently empty - consider logging or rethrowing)
+        }
+        catch (Exception ex)
+        {
+
+        }
     }
 
     private void ScopeChanged()
@@ -264,6 +288,11 @@
     {
         croppedCanvasDataURL = null;
 
+        if (this.tempPicturePhysicalPath == null)
+        {
+            return;
+        }
+
         // Check if extension is allowed
         string fileExtension = Path.GetExtension(file.Name).ToLower();
         if(!bannerAllowFiletypes.Split(',').Contains(fileExtension))
@@ -279,8 +308,8 @@
             return;
         }
 
-        // Get a temporary file path
-        string tempFileName = Path.Combine(this.webRootPath, "temp", file.Name);
+        // Get a temporary file path (physical)
+        string tempFileName = Path.Combine(this.tempPicturePhysicalPath, file.Name);
         FileInfo fi = new FileInfo(tempFileName);
         fi.Directory?.Create();
         Trace.WriteLine($"Uploading {file.Name} to {tempFileName}");
@@ -289,10 +318,16 @@
         {
             await fileStream.CopyToAsync(stream);
         }
-
-        bannerFilePath = tempFileName.Replace(
-            Path.Combine(webRootPath),
-            string.Empty).Replace("\\", "/");
+        // Build a web-accessible relative path for the uploaded temp file using WebDataPath
+        bannerFilePath = "/" + string.Join("/", new[]
+        {
+            TenantManagerService.WebDataPath.Trim('/'),
+            Road.TenantId.ToString(),
+            Road.RoadId.ToString(),
+            "temp",
+            file.Name
+        }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        this.fileExtension = fileExtension.Trim('.');
         Snackbar.Add("File uploaded. Please crop and accept.", Severity.Success);
 
         await Task.CompletedTask;
@@ -300,15 +335,69 @@
 
     private void SaveBanner()
     {
-        if (croppedCanvasDataURL == null)
+        if (string.IsNullOrWhiteSpace(croppedCanvasDataURL))
         {
             return;
         }
 
-        Road.Banner = croppedCanvasDataURL;
-        TenantManagerService.SaveRoad(Road);
-        croppedCanvasDataURL = null;
-        this.bannerFilePath = null;
-        this.StateHasChanged();
+        try
+        {
+            // Encode the image data as a base64 data URL for use in HTML
+            // Physical save path under the tenant root
+            string savePath = Path.Combine(
+                TenantManagerService.GetTenantRootPath(Road.TenantId),
+                Road.RoadId.ToString(),
+                "images");
+
+            Directory.CreateDirectory(savePath);
+
+            // Keep only one canonical banner file per road to avoid stale images.
+            DeleteExistingBannerFiles(savePath);
+
+            string bannerFileName = $"banner.{this.fileExtension}";
+            string bannerPhysicalPath = Path.Combine(savePath, bannerFileName);
+            File.WriteAllBytes(bannerPhysicalPath, this.croppedCanvasData ?? []);
+
+            // Build the web-accessible relative URL for the banner using WebDataPath
+            string relativeSavePath = string.Join("/", new[]
+            {
+                TenantManagerService.WebDataPath.Trim('/'),
+                Road.TenantId.ToString(),
+                Road.RoadId.ToString(),
+                "images"
+            }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            Road.Banner = "/" + relativeSavePath.TrimStart('/') + "/" + bannerFileName;
+
+            TenantManagerService.SaveRoad(Road);
+            DeleteTemporaryUploadFile();
+
+            croppedCanvasDataURL = null;
+            this.bannerFilePath = null;
+            this.StateHasChanged();
+            Snackbar.Add("Banner image saved.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"Failed to save banner image: {ex.Message}");
+            Snackbar.Add("Failed to save banner image.", Severity.Error);
+        }
+    }
+
+    private static void DeleteExistingBannerFiles(string bannerDirectory)
+    {
+        foreach (string existingBanner in Directory.EnumerateFiles(bannerDirectory, "banner.*", SearchOption.TopDirectoryOnly))
+        {
+            File.Delete(existingBanner);
+        }
+    }
+
+    private void DeleteTemporaryUploadFile()
+    {
+        if (this.tempPicturePhysicalPath == null || !Directory.Exists(this.tempPicturePhysicalPath))
+        {
+            return;
+        }
+        Directory.Delete(this.tempPicturePhysicalPath, recursive: true);
     }
 }

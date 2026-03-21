@@ -83,12 +83,22 @@ else
                                            OnClick="CopyTenantLink" />
                         </div>
                     </div>
-                    <MudButton Variant="Variant.Outlined"
-                               StartIcon="@Icons.Material.Filled.OpenInNew"
-                               Href="@($"/RoadToThere/{_selectedTenant.TenantId}")"
-                               Target="_blank">
-                        Open Tenant
-                    </MudButton>
+                    <div class="d-flex align-center gap-2">
+                        @* Tenant-level quick action for inbound routing to all roads. *@
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.AlternateEmail"
+                                   OnClick="CopyEmailAllRoadsAddressAsync">
+                            Email All Roads
+                        </MudButton>
+
+                        <MudButton Variant="Variant.Outlined"
+                                   StartIcon="@Icons.Material.Filled.OpenInNew"
+                                   Href="@($"/RoadToThere/{_selectedTenant.TenantId}")"
+                                   Target="_blank">
+                            Open Tenant
+                        </MudButton>
+                    </div>
                 </div>
             </MudPaper>
 
@@ -123,14 +133,22 @@ else
                             <MudExpansionPanels MultiExpansion="false">
                                 @foreach (var road in _selectedTenant.Roads)
                                 {
-                                    <MudExpansionPanel MaxHeight="1500">
+                                    <MudExpansionPanel>
                                         <TitleContent>
-                                            <div class="d-flex flex-wrap align-center gap-2">
+                                            <div class="d-flex flex-wrap align-center justify-space-between gap-2 w-100 pr-2">
+                                                <div class="d-flex flex-wrap align-center gap-2">
                                                 <MudIcon Icon="@Icons.Material.Filled.Timeline" Size="Size.Small" />
                                                 <MudText Typo="Typo.body1"><strong>@road.Title</strong></MudText>
-                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">
-                                                    @road.StartTime?.ToString("MMM dd") - @road.EndTime?.ToString("MMM dd, yyyy")
-                                                </MudChip>
+                                                </div>
+
+                                                @* Road-level quick action avoids hidden drop-down navigation. *@
+                                                <MudButton Variant="Variant.Text"
+                                                           Color="Color.Primary"
+                                                           StartIcon="@Icons.Material.Filled.AlternateEmail"
+                                                           Size="Size.Small"
+                                                           OnClick="() => CopyRoadNotificationAddressAsync(road)">
+                                                    Email this Road
+                                                </MudButton>
                                             </div>
                                         </TitleContent>
                                         <ChildContent>
@@ -350,10 +368,30 @@ else
 
         await LoadTenantEmailsAsync();
         SendGridEmailService.InboundEmailIngested += OnInboundEmailIngested;
+        SendGridEmailService.InboundEmailProcessingStatusChanged += OnInboundEmailProcessingStatusChanged;
         _isLoading = false;
     }
 
     private void OnInboundEmailIngested(object? sender, EmailIngestedEventArgs e)
+    {
+        if (_selectedTenant is null || e.TenantId != _selectedTenant.TenantId)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(async () =>
+        {
+            await LoadTenantEmailsAsync();
+            StateHasChanged();
+        });
+    }
+
+    /// <summary>
+    /// Handles background processing state updates so email status transitions refresh immediately.
+    /// </summary>
+    /// <param name="sender">Event sender.</param>
+    /// <param name="e">Processing state transition payload.</param>
+    private void OnInboundEmailProcessingStatusChanged(object? sender, EmailProcessingStatusChangedEventArgs e)
     {
         if (_selectedTenant is null || e.TenantId != _selectedTenant.TenantId)
         {
@@ -649,6 +687,72 @@ else
         return $"{tenantName} • all roads";
     }
 
+    /// <summary>
+    /// Copies the tenant-level inbound address that routes to all roads.
+    /// </summary>
+    private async Task CopyEmailAllRoadsAddressAsync()
+    {
+        if (_selectedTenant is null)
+        {
+            return;
+        }
+
+        var address = GetTenantInboundAddress(_selectedTenant);
+        await ClipboardService.CopyToClipboard(address);
+        Snackbar.Add("Email All Roads address copied.", Severity.Success);
+    }
+
+    /// <summary>
+    /// Copies the road-level inbound address for one selected road.
+    /// </summary>
+    /// <param name="road">The road that should receive inbound email content.</param>
+    private async Task CopyRoadNotificationAddressAsync(IRoadToThere road)
+    {
+        if (_selectedTenant is null)
+        {
+            return;
+        }
+
+        var address = GetRoadInboundAddress(_selectedTenant, road);
+        await ClipboardService.CopyToClipboard(address);
+        Snackbar.Add($"'{road.Title}' email address copied.", Severity.Success);
+    }
+
+    /// <summary>
+    /// Builds the tenant-level inbound email address.
+    /// </summary>
+    /// <param name="tenant">The selected tenant.</param>
+    /// <returns>Tenant-level inbound address in tenantid@notifications.&lt;domain&gt; format.</returns>
+    private string GetTenantInboundAddress(ITenantContainer tenant)
+    {
+        return $"{tenant.TenantId}@{GetNotificationHost()}";
+    }
+
+    /// <summary>
+    /// Builds the road-level inbound email address.
+    /// </summary>
+    /// <param name="tenant">The selected tenant.</param>
+    /// <param name="road">The selected road.</param>
+    /// <returns>Road-level inbound address in tenantid.roadid@notifications.&lt;domain&gt; format.</returns>
+    private string GetRoadInboundAddress(ITenantContainer tenant, IRoadToThere road)
+    {
+        return $"{tenant.TenantId}.{road.RoadId}@{GetNotificationHost()}";
+    }
+
+    /// <summary>
+    /// Derives the notifications host from the current app host.
+    /// </summary>
+    /// <returns>The notifications host for inbound addressing.</returns>
+    private string GetNotificationHost()
+    {
+        var host = new Uri(NavigationManager.BaseUri).Host;
+
+        // Avoid duplicating the prefix when the app is already running on notifications.*.
+        return host.StartsWith("notifications.", StringComparison.OrdinalIgnoreCase)
+            ? host
+            : $"notifications.{host}";
+    }
+
     public void CreateRoad(ITenantContainer tenantContainer)
     {
         var roadToThere = new RoadToThere
@@ -802,6 +906,7 @@ else
     public ValueTask DisposeAsync()
     {
         SendGridEmailService.InboundEmailIngested -= OnInboundEmailIngested;
+        SendGridEmailService.InboundEmailProcessingStatusChanged -= OnInboundEmailProcessingStatusChanged;
         return ValueTask.CompletedTask;
     }
 }

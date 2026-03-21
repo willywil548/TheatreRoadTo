@@ -53,12 +53,44 @@ namespace Theatre_TimeLine.Services
     public interface IInboundEmailProcessingQueue
     {
         /// <summary>
+        /// Raised whenever a processing attempt persists a meaningful status transition.
+        /// </summary>
+        event EventHandler<InboundEmailProcessingStatusChangedEventArgs>? ProcessingStatusChanged;
+
+        /// <summary>
         /// Enqueues an inbound email processing request.
         /// </summary>
         /// <param name="request">The processing request payload.</param>
         /// <param name="cancellationToken">A token to cancel enqueueing.</param>
         /// <returns>A task-like value that completes when the item is queued.</returns>
         ValueTask QueueAsync(InboundEmailProcessingRequest request, CancellationToken cancellationToken = default);
+    }
+
+    /// <summary>
+    /// Event arguments for inbound email processing status changes.
+    /// </summary>
+    /// <param name="tenantId">Tenant that owns the processing request.</param>
+    /// <param name="emailId">Processing identifier for the inbound email.</param>
+    /// <param name="status">Latest persisted processing state value.</param>
+    public sealed class InboundEmailProcessingStatusChangedEventArgs(
+        Guid tenantId,
+        Guid emailId,
+        string status) : EventArgs
+    {
+        /// <summary>
+        /// Gets the tenant identifier that owns the processing request.
+        /// </summary>
+        public Guid TenantId { get; } = tenantId;
+
+        /// <summary>
+        /// Gets the processing identifier for the inbound email.
+        /// </summary>
+        public Guid EmailId { get; } = emailId;
+
+        /// <summary>
+        /// Gets the latest persisted processing state value.
+        /// </summary>
+        public string Status { get; } = status;
     }
 
     /// <summary>
@@ -126,6 +158,9 @@ namespace Theatre_TimeLine.Services
     /// </summary>
     public sealed class InboundEmailProcessingQueue : BackgroundService, IInboundEmailProcessingQueue
     {
+        /// <inheritdoc />
+        public event EventHandler<InboundEmailProcessingStatusChangedEventArgs>? ProcessingStatusChanged;
+
         private const int MaxRetryAttempts = 3;
         private const int DefaultInMemoryQueueCapacity = 500;
         private const int DefaultMemoryResumeThresholdPercent = 80;
@@ -244,6 +279,8 @@ namespace Theatre_TimeLine.Services
                 ProcessedCounter.Add(1);
                 if (result.Success)
                 {
+                    // Notify listeners that this processing run completed so UI can refresh immediately.
+                    RaiseProcessingStatusChanged(request.TenantId, request.EmailId, "completed");
                     await RecoverOverflowRequestsAsync(stoppingToken);
                     continue;
                 }
@@ -252,6 +289,9 @@ namespace Theatre_TimeLine.Services
                 if (result.Retryable && request.Attempt >= MaxRetryAttempts)
                 {
                     await MarkMaxRetriesExceededAsync(request, result.Summary, stoppingToken);
+
+                    // Retry limit reached; status is terminally failed.
+                    RaiseProcessingStatusChanged(request.TenantId, request.EmailId, "failed");
 
                     _logger.LogWarning(
                         "Inbound email processing reached max retries and was marked failed. EmailId: {EmailId}, Attempt: {Attempt}, Reason: {Reason}",
@@ -263,6 +303,9 @@ namespace Theatre_TimeLine.Services
 
                 if (!result.Retryable)
                 {
+                    // Non-retryable errors are terminal and should refresh status in the UI.
+                    RaiseProcessingStatusChanged(request.TenantId, request.EmailId, "failed");
+
                     _logger.LogWarning(
                         "Inbound email processing permanently failed. EmailId: {EmailId}, Attempt: {Attempt}, Reason: {Reason}",
                         request.EmailId,
@@ -279,6 +322,9 @@ namespace Theatre_TimeLine.Services
                 var backoffSeconds = Math.Min(10, request.Attempt * 2);
                 RetryScheduledCounter.Add(1);
 
+                // Retryable failures remain in-progress; surface this transition so clients can refresh status chips.
+                RaiseProcessingStatusChanged(request.TenantId, request.EmailId, "retryable-failure");
+
                 // Retry asynchronously with bounded backoff so ingestion is never blocked.
                 _ = Task.Run(async () =>
                 {
@@ -292,6 +338,17 @@ namespace Theatre_TimeLine.Services
                     }
                 }, stoppingToken);
             }
+        }
+
+        /// <summary>
+        /// Raises <see cref="ProcessingStatusChanged"/> when listeners are registered.
+        /// </summary>
+        /// <param name="tenantId">Tenant that owns the processing request.</param>
+        /// <param name="emailId">Processing identifier for the inbound email.</param>
+        /// <param name="status">Latest processing status value.</param>
+        private void RaiseProcessingStatusChanged(Guid tenantId, Guid emailId, string status)
+        {
+            ProcessingStatusChanged?.Invoke(this, new InboundEmailProcessingStatusChangedEventArgs(tenantId, emailId, status));
         }
 
         /// <summary>

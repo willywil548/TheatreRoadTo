@@ -112,7 +112,15 @@ namespace Theatre_TimeLine.Models
                 try
                 {
                     DirectoryInfo roadDirectory = new(roadDir);
-                    roadToTheres.Add(this.GetRoad(Guid.Parse(roadDirectory.Name)));
+
+                    // Tenant folders can contain non-road directories (for example: emails, _tokens).
+                    // Only GUID directory names represent roads.
+                    if (!Guid.TryParse(roadDirectory.Name, out Guid roadId))
+                    {
+                        continue;
+                    }
+
+                    roadToTheres.Add(this.GetRoad(roadId));
                 }
                 catch
                 {

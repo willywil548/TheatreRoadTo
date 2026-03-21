@@ -8,6 +8,18 @@ namespace Theatre_TimeLine.Contracts
     public interface ITenantManagerService : IRoadToThereManager
     {
         /// <summary>
+        /// Gets the path to the data folder relative to the web root (wwwroot) using
+        /// forward slashes. Use this when constructing web-accessible URLs for tenant assets.
+        /// </summary>
+        string RelativeDataPath { get; }
+
+        /// <summary>
+        /// Gets the web-data path (relative to wwwroot) for building URLs to static assets.
+        /// This value is safe to concatenate into URLs and uses forward slashes.
+        /// </summary>
+        string WebDataPath { get; }
+
+        /// <summary>
         /// Gets the root file system path for a tenant's data.
         /// </summary>
         /// <param name="tenantId">The tenant ID.</param>
